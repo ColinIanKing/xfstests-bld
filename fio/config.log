@@ -1,0 +1,291 @@
+# FIO configure log Thu  8 Sep 13:35:44 BST 2016
+# Configured with: './configure' '--extra-cflags=-g -O2 -I/home/king/xfstests-bld/bld/include'
+#
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -c -o /tmp/fio-conf--3669-.o /tmp/fio-conf--3669-.c
+/tmp/fio-conf--3669-.c:2:2: error: #error __ANDROID__ not defined
+ #error __ANDROID__ not defined
+  ^~~~~
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -c -o /tmp/fio-conf--3669-.o /tmp/fio-conf--3669-.c
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -c -o /tmp/fio-conf--3669-.o /tmp/fio-conf--3669-.c
+/tmp/fio-conf--3669-.c:2:2: error: #error __i386__ not defined
+ #error __i386__ not defined
+  ^~~~~
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -c -o /tmp/fio-conf--3669-.o /tmp/fio-conf--3669-.c
+Compiling test case cross
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib
+Compiling test case endian
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib
+Compiling test case wordsize
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -DWORDSIZE=32 -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib
+/tmp/fio-conf--3669-.c: In function ‘main’:
+/tmp/fio-conf--3669-.c:5:3: error: size of unnamed array is negative
+   BUILD_BUG_ON(sizeof(long)*CHAR_BIT != WORDSIZE);
+   ^~~~~~~~~~~~
+Compiling test case wordsize
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -DWORDSIZE=64 -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib
+Compiling test case zlib
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lz
+/tmp/fio-conf--3669-.c:1:18: fatal error: zlib.h: No such file or directory
+ #include <zlib.h>
+                  ^
+compilation terminated.
+Compiling test case libaio
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case posixaio
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/ccVYVl7O.o: In function `main':
+/tmp/fio-conf--3669-.c:5: undefined reference to `aio_read'
+collect2: error: ld returned 1 exit status
+Compiling test case posixaio
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lrt -laio
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x19): undefined reference to `pthread_self'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x2c): undefined reference to `pthread_getschedparam'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x70): undefined reference to `pthread_setschedparam'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0xb6): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x1c6): undefined reference to `pthread_cond_signal'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x1d3): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x1e6): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x259): undefined reference to `pthread_cond_timedwait'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x281): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x3e8): undefined reference to `pthread_attr_init'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x3f7): undefined reference to `pthread_attr_setdetachstate'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `handle_fildes_io':
+(.text+0x40d): undefined reference to `pthread_create'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_init':
+(.text+0x79a): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0x81e): undefined reference to `pthread_self'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0x830): undefined reference to `pthread_getschedparam'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0x843): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0x962): undefined reference to `pthread_cond_signal'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0x976): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xa19): undefined reference to `pthread_attr_init'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xa28): undefined reference to `pthread_attr_setdetachstate'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xa32): undefined reference to `__pthread_get_minstack'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xa3f): undefined reference to `pthread_attr_setstacksize'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xa7c): undefined reference to `pthread_create'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xaa1): undefined reference to `pthread_attr_destroy'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_enqueue_request':
+(.text+0xc8b): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_misc.o): In function `__aio_init':
+(.text+0x7bc): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify_only':
+(.text+0xd0): undefined reference to `pthread_create'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify_only':
+(.text+0xf6): undefined reference to `pthread_attr_init'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify_only':
+(.text+0x105): undefined reference to `pthread_attr_setdetachstate'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x276): undefined reference to `pthread_create'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x302): undefined reference to `pthread_create'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x31e): undefined reference to `pthread_attr_init'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x32d): undefined reference to `pthread_attr_setdetachstate'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x346): undefined reference to `pthread_attr_init'
+/usr/lib/gcc/x86_64-linux-gnu/6/../../../x86_64-linux-gnu/librt.a(aio_notify.o): In function `__aio_notify':
+(.text+0x355): undefined reference to `pthread_attr_setdetachstate'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info.part.4':
+(.text+0x1692): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info_bases':
+(.text+0x1717): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info_table_bases':
+(.text+0x17eb): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__deregister_frame_info_bases':
+(.text+0x188e): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__deregister_frame_info_bases':
+(.text+0x1916): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `_Unwind_Find_FDE':
+(.text+0x19e8): undefined reference to `pthread_mutex_lock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `_Unwind_Find_FDE':
+(.text+0x1a32): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `_Unwind_Find_FDE':
+(.text+0x1b2b): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info.part.4':
+(.text+0x16b1): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info_bases':
+(.text+0x1736): undefined reference to `pthread_mutex_unlock'
+/usr/lib/gcc/x86_64-linux-gnu/6/libgcc_eh.a(unwind-dw2-fde-dip.o): In function `__register_frame_info_table_bases':
+(.text+0x180a): undefined reference to `pthread_mutex_unlock'
+collect2: error: ld returned 1 exit status
+Compiling test case solarisaio
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio -laio
+/tmp/fio-conf--3669-.c:2:24: fatal error: sys/asynch.h: No such file or directory
+ #include <sys/asynch.h>
+                        ^
+compilation terminated.
+Compiling test case __sync_fetch_and_add()
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case libverbs
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -libverbs -laio
+/tmp/fio-conf--3669-.c:2:29: fatal error: infiniband/arch.h: No such file or directory
+ #include <infiniband/arch.h>
+                             ^
+compilation terminated.
+Compiling test case rdma
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lrdmacm -laio
+/tmp/fio-conf--3669-.c:2:27: fatal error: rdma/rdma_cma.h: No such file or directory
+ #include <rdma/rdma_cma.h>
+                           ^
+compilation terminated.
+Compiling test case linux_fallocate
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case posix_fadvise
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case posix_fallocate
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case sched_setaffinity(,,)
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case clock_gettime
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case clock monotonic
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio -laio
+Compiling test case clock monotonic
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio -laio
+Compiling test case clock monotonic precise
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio -laio
+/tmp/fio-conf--3669-.c: In function ‘main’:
+/tmp/fio-conf--3669-.c:5:24: error: ‘CLOCK_MONOTONIC_PRECISE’ undeclared (first use in this function)
+   return clock_gettime(CLOCK_MONOTONIC_PRECISE, NULL);
+                        ^~~~~~~~~~~~~~~~~~~~~~~
+/tmp/fio-conf--3669-.c:5:24: note: each undeclared identifier is reported only once for each function it appears in
+Compiling test case gettimeofday
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case fdatasync
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case sync_file_range
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case ext4 move extent
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/fio-conf--3669-.c: In function ‘main’:
+/tmp/fio-conf--3669-.c:5:22: error: storage size of ‘me’ isn’t known
+   struct move_extent me;
+                      ^~
+/tmp/fio-conf--3669-.c:6:19: error: ‘EXT4_IOC_MOVE_EXT’ undeclared (first use in this function)
+   return ioctl(0, EXT4_IOC_MOVE_EXT, &me);
+                   ^~~~~~~~~~~~~~~~~
+/tmp/fio-conf--3669-.c:6:19: note: each undeclared identifier is reported only once for each function it appears in
+Compiling test case linux splice
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case guasi
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/fio-conf--3669-.c:1:19: fatal error: guasi.h: No such file or directory
+ #include <guasi.h>
+                   ^
+compilation terminated.
+Compiling test case fusion-aw
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -L/usr/lib/fio -L/usr/lib/nvm -lnvm-primitives -ldl -lpthread -laio
+/tmp/fio-conf--3669-.c:1:32: fatal error: nvm/nvm_primitives.h: No such file or directory
+ #include <nvm/nvm_primitives.h>
+                                ^
+compilation terminated.
+Compiling test case libnuma
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lnuma -laio
+/tmp/fio-conf--3669-.c:1:18: fatal error: numa.h: No such file or directory
+ #include <numa.h>
+                  ^
+compilation terminated.
+Compiling test case strsep
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case strcasestr
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case strlcat
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/fio-conf--3669-.c: In function ‘main’:
+/tmp/fio-conf--3669-.c:7:3: warning: implicit declaration of function ‘strlcat’ [-Wimplicit-function-declaration]
+   strlcat(dst, string, sizeof(dst));
+   ^~~~~~~
+/tmp/cckkXIEO.o: In function `main':
+/tmp/fio-conf--3669-.c:7: undefined reference to `strlcat'
+collect2: error: ld returned 1 exit status
+Compiling test case getopt_long_only
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case inet_aton
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case socklen_t
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case __thread
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case RUSAGE_THREAD
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case SCHED_IDLE
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case TCP_NODELAY
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case SO_SNDBUF
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case TCP_MAXSEG
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case RLIMIT_MEMLOCK
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case pwritev
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case ipv6
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/ccsf4zAu.o: In function `main':
+/tmp/fio-conf--3669-.c:12: warning: Using 'getaddrinfo' in statically linked applications requires at runtime the shared libraries from the glibc version used for linking
+Compiling test case rbd
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lrbd -lrados -laio
+/tmp/fio-conf--3669-.c:1:24: fatal error: rbd/librbd.h: No such file or directory
+ #include <rbd/librbd.h>
+                        ^
+compilation terminated.
+Compiling test case setvbuf
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case gfapi
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -lgfapi -lglusterfs -laio
+/tmp/fio-conf--3669-.c:1:32: fatal error: glusterfs/api/glfs.h: No such file or directory
+ #include <glusterfs/api/glfs.h>
+                                ^
+compilation terminated.
+Compiling test case s390_z196_facilities
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/fio-conf--3669-.c: Assembler messages:
+/tmp/fio-conf--3669-.c:7: Error: unknown pseudo-op: `.machine'
+/tmp/fio-conf--3669-.c:8: Error: unknown pseudo-op: `.machine'
+/tmp/fio-conf--3669-.c:9: Error: no such instruction: `stfle %rcx'
+/tmp/fio-conf--3669-.c:10: Error: unknown pseudo-op: `.machine'
+Compiling test case mtd
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case getmntent
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case getmntinfo
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+/tmp/fio-conf--3669-.c: In function ‘main’:
+/tmp/fio-conf--3669-.c:6:17: error: storage size of ‘st’ isn’t known
+   struct statfs st;
+                 ^~
+/tmp/fio-conf--3669-.c:7:10: warning: implicit declaration of function ‘getmntinfo’ [-Wimplicit-function-declaration]
+   return getmntinfo(&st, MNT_NOWAIT);
+          ^~~~~~~~~~
+/tmp/fio-conf--3669-.c:7:26: error: ‘MNT_NOWAIT’ undeclared (first use in this function)
+   return getmntinfo(&st, MNT_NOWAIT);
+                          ^~~~~~~~~~
+/tmp/fio-conf--3669-.c:7:26: note: each undeclared identifier is reported only once for each function it appears in
+Compiling test case static_assert
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio
+Compiling test case bool
+gcc -D_GNU_SOURCE -include config-host.h -g -O2 -I/home/king/xfstests-bld/bld/include -o /tmp/fio-conf--3669-.exe /tmp/fio-conf--3669-.c -static -L/home/king/xfstests-bld/bld/lib -laio

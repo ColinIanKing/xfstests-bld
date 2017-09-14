@@ -1,0 +1,5 @@
+QA output created by 048
+--- xfsctl with bad output address
+   --- got error 14 as expected
+--- xfsctl with bad input address
+   --- got error 14 as expected

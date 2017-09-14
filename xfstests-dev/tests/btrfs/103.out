@@ -1,0 +1,101 @@
+QA output created by 103
+
+Testing with zlib compression...
+Blocks modified: [0 - 0]
+Blocks modified: [1 - 2]
+Blocks modified: [3 - 3]
+Blocks modified: [2 - 2]
+Blocks modified: [3 - 4]
+Blocks modified: [5 - 5]
+File contents before unmounting filesystem:
+foo:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+4 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+6
+bar:
+0 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+2 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+3 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+5 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+6
+File contents after mounting filesystem again:
+foo:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+4 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+6
+bar:
+0 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+2 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+3 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+5 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+6
+
+Testing with lzo compression...
+Blocks modified: [0 - 0]
+Blocks modified: [1 - 2]
+Blocks modified: [3 - 3]
+Blocks modified: [2 - 2]
+Blocks modified: [3 - 4]
+Blocks modified: [5 - 5]
+File contents before unmounting filesystem:
+foo:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+4 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+6
+bar:
+0 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+2 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+3 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+5 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+6
+File contents after mounting filesystem again:
+foo:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+4 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+6
+bar:
+0 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+2 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+3 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+5 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+6

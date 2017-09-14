@@ -1,0 +1,398 @@
+##/bin/bash
+#
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# standard filters
+#
+
+# Checks that given_value is in range of correct_value +/- tolerance.
+# Tolerance can be an absolute value or a percentage of the correct value
+# (see examples with tolerances below).
+# Outputs suitable message to stdout if it's not in range.
+#
+# A verbose option, -v, may be used as the LAST argument
+# 
+# e.g. 
+# foo: 0.0298 = 0.03 +/- 5%
+# _within_tolerance "foo" 0.0298 0.03 5%  
+# 
+# foo: 0.0298 = 0.03 +/- 0.01
+# _within_tolerance "foo" 0.0298 0.03 0.01
+#
+# foo: 0.0298 = 0.03 -0.01 +0.002
+# _within_tolerance "foo" 0.0298 0.03 0.01 0.002
+#
+# foo: verbose output of 0.0298 = 0.03 +/- 5% 
+# _within_tolerance "foo" 0.0298 0.03 5% -v 
+_within_tolerance()
+{
+  _name=$1
+  _given_val=$2
+  _correct_val=$3
+  _mintol=$4
+  _maxtol=$_mintol
+  _verbose=0
+  _debug=false
+
+  # maxtol arg is optional
+  # verbose arg is optional
+  if [ $# -ge 5 ]
+  then 
+     if [ "$5" = "-v" ]
+     then
+	_verbose=1
+     else
+        _maxtol=$5
+     fi
+  fi
+  if [ $# -ge 6 ]
+  then
+     [ "$6" = "-v" ] && _verbose=1
+  fi
+
+  # find min with or without %
+  _mintolerance=`echo $_mintol | sed -e 's/%//'` 
+  if [ $_mintol = $_mintolerance ]
+  then 
+      _min=`echo "scale=5; $_correct_val-$_mintolerance" | bc`
+  else
+      _min=`echo "scale=5; $_correct_val-$_mintolerance*0.01*$_correct_val" | bc`
+  fi
+
+  # find max with or without %
+  _maxtolerance=`echo $_maxtol | sed -e 's/%//'` 
+  if [ $_maxtol = $_maxtolerance ]
+  then 
+      _max=`echo "scale=5; $_correct_val+$_maxtolerance" | bc`
+  else
+      _max=`echo "scale=5; $_correct_val+$_maxtolerance*0.01*$_correct_val" | bc`
+  fi
+
+  $_debug && echo "min = $_min"
+  $_debug && echo "max = $_max"
+
+  cat <<EOF >$tmp.bc.1
+scale=5;
+if ($_min <= $_given_val) 1;
+if ($_min > $_given_val) 0; 
+EOF
+
+  cat <<EOF >$tmp.bc.2
+scale=5;
+if ($_given_val <= $_max) 1;
+if ($_given_val > $_max) 0;
+EOF
+
+  _above_min=`bc <$tmp.bc.1`
+  _below_max=`bc <$tmp.bc.2`
+
+  rm -f $tmp.bc.[12]
+
+  _in_range=`expr $_above_min \& $_below_max` 
+
+  # fix up min, max precision for output
+  # can vary for 5.3, 6.2
+
+  # remove any trailing zeroes from min, max if they have fractional parts
+  _min=`echo $_min | sed -e '/\./s/0*$//' -e 's/\.$//'`
+  _max=`echo $_max | sed -e '/\./s/0*$//' -e 's/\.$//'`
+
+  if [ $_in_range -eq 1 ] 
+  then
+	[ $_verbose -eq 1 ] && echo $_name is in range
+	return 0
+  else
+	[ $_verbose -eq 1 ] && echo $_name has value of $_given_val
+	[ $_verbose -eq 1 ] && echo $_name is NOT in range $_min .. $_max	
+	return 1
+  fi
+}
+
+# ctime(3) dates
+#
+_filter_date()
+{
+    sed \
+	-e 's/[A-Z][a-z][a-z] [A-z][a-z][a-z]  *[0-9][0-9]* [0-9][0-9]:[0-9][0-9]:[0-9][0-9] [0-9][0-9][0-9][0-9]$/DATE/'
+}
+
+# prints filtered output on stdout, values (use eval) on stderr
+# Non XFS filesystems always return a 4k block size and a 256 byte inode.
+_filter_mkfs()
+{
+    case $FSTYP in
+    xfs)
+	;;
+    *)
+	cat - >/dev/null
+	perl -e 'print STDERR "dbsize=4096\nisize=256\n"'
+	return ;;
+    esac
+
+    echo "_fs_has_crcs=0" >&2
+    set -
+    perl -ne '
+    if (/^meta-data=([\w,|\/.-]+)\s+isize=(\d+)\s+agcount=(\d+), agsize=(\d+) blks/) {
+	print STDERR "ddev=$1\nisize=$2\nagcount=$3\nagsize=$4\n";
+	print STDOUT "meta-data=DDEV isize=XXX agcount=N, agsize=XXX blks\n";
+    }
+    if (/^\s+=\s+sectsz=(\d+)\s+attr=(\d+)/) {
+        print STDERR "sectsz=$1\nattr=$2\n";
+    }
+    if (/^\s+=\s+crc=(\d)/) {
+        print STDERR "_fs_has_crcs=$1\n";
+    }
+    if (/^data\s+=\s+bsize=(\d+)\s+blocks=(\d+), imaxpct=(\d+)/) {
+	print STDERR "dbsize=$1\ndblocks=$2\nimaxpct=$3\n";
+	print STDOUT "data     = bsize=XXX blocks=XXX, imaxpct=PCT\n";
+    }
+    if (/^\s+=\s+sunit=(\d+)\s+swidth=(\d+) blks/) {
+        print STDERR "sunit=$1\nswidth=$2\nunwritten=1\n";
+	print STDOUT "         = sunit=XXX swidth=XXX, unwritten=X\n";
+    }
+    if (/^naming\s+=version\s+(\d+)\s+bsize=(\d+)/) {
+	print STDERR "dirversion=$1\ndirbsize=$2\n";
+	print STDOUT "naming   =VERN bsize=XXX\n";
+    }
+    if (/^log\s+=(internal log|[\w|\/.-]+)\s+bsize=(\d+)\s+blocks=(\d+),\s+version=(\d+)/ ||
+	/^log\s+=(internal log|[\w|\/.-]+)\s+bsize=(\d+)\s+blocks=(\d+)/) {
+	print STDERR "ldev=\"$1\"\nlbsize=$2\nlblocks=$3\nlversion=$4\n";
+	print STDOUT "log      =LDEV bsize=XXX blocks=XXX\n";
+    }
+    if (/^\s+=\s+sectsz=(\d+)\s+sunit=(\d+) blks/) {
+	print STDERR "logsectsz=$1\nlogsunit=$2\n\n";
+    }
+    if (/^realtime\s+=([\w|\/.-]+)\s+extsz=(\d+)\s+blocks=(\d+), rtextents=(\d+)/) {
+	print STDERR "rtdev=$1\nrtextsz=$2\nrtblocks=$3\nrtextents=$4\n";
+	print STDOUT "realtime =RDEV extsz=XXX blocks=XXX, rtextents=XXX\n";
+    }'
+}
+
+
+# prints the bits we care about in growfs
+# 
+_filter_growfs()
+{
+    perl -ne '
+    if (/^data\s+=\s+bsize=(\d+)\s+blocks=(\d+), imaxpct=(\d+)/) {
+        print "xfs_growfs --BlockSize=$1 --Blocks=$2\n";
+    }
+    elsif (/^data/) {
+        print;
+    }'
+}
+
+_filter_dd()
+{
+    $AWK_PROG '
+        /records in/                { next }
+        /records out/               { next }
+        /No space left on device/   { print "   !!! disk full (expected)" 
+                                      next }
+                                    { print "   *** " $0 }
+    '
+}
+
+common_line_filter()
+{
+    perl -ne 'if (/.*:(.*)/) {
+        if ( "$last_line" ne "$1" ) { print "$_"; $first_match=1; }
+        elsif ( $first_match==1 ) { print "*\n"; $first_match=0; }
+        $last_line="$1";
+    }
+    else {
+        print $_; $last_line=$_;
+    }'
+}
+
+_filter_xfs_io()
+{
+    # Apart from standard numeric values, we also filter out 'inf' and 'nan'
+    # which can result from division in some cases
+    sed -e "s/[0-9/.]* [GMKiBbytes]*, [0-9]* ops\; [0-9/:. sec]* ([infa0-9/.]* [EPGMKiBbytes]*\/sec and [infa0-9/.]* ops\/sec)/XXX Bytes, X ops\; XX:XX:XX.X (XXX YYY\/sec and XXX ops\/sec)/"
+}
+
+_filter_xfs_io_unique()
+{
+    common_line_filter | _filter_xfs_io
+}
+
+_filter_xfs_io_units_modified()
+{
+	UNIT=$1
+	UNIT_SIZE=$2
+
+	$AWK_PROG -v unit="$UNIT" -v unit_size=$UNIT_SIZE '
+		/wrote/ {
+			split($2, bytes, "/")
+
+			bytes_written = strtonum(bytes[1])
+
+			offset = strtonum($NF)
+
+			unit_start = offset / unit_size
+			unit_start = int(unit_start)
+			unit_end = (offset + bytes_written - 1) / unit_size
+			unit_end = int(unit_end)
+
+			printf("%ss modified: [%d - %d]\n", unit, unit_start, unit_end)
+
+			next
+		}
+	'
+}
+
+_filter_xfs_io_blocks_modified()
+{
+	BLOCK_SIZE=$(get_block_size $SCRATCH_MNT)
+
+	_filter_xfs_io_units_modified "Block" $BLOCK_SIZE
+}
+
+_filter_xfs_io_pages_modified()
+{
+	PAGE_SIZE=$(get_page_size)
+
+	_filter_xfs_io_units_modified "Page" $PAGE_SIZE
+}
+
+
+_filter_test_dir()
+{
+	sed -e "s,$TEST_DEV,TEST_DEV,g" -e "s,$TEST_DIR,TEST_DIR,g"
+}
+
+_filter_scratch()
+{
+	sed -e "s,$SCRATCH_DEV,SCRATCH_DEV,g" \
+	    -e "s,$SCRATCH_MNT,SCRATCH_MNT,g" \
+	    -e "/.use_space/d"
+}
+
+# Turn any device in the scratch pool into SCRATCH_DEV
+_filter_scratch_pool()
+{
+	FILTER_STRINGS=`echo $SCRATCH_DEV_POOL | sed -e 's/\s\+/\\\|/g'`
+	sed -e "s,$FILTER_STRINGS,SCRATCH_DEV,g"
+}
+
+_filter_spaces()
+{
+       sed -e 's/ [ ]*/ /g'
+}
+
+_filter_quota()
+{
+	# Long dev name might be split onto its own line; last
+	# seds remove that newline if present
+	_filter_scratch | _filter_test_dir | _filter_spaces | \
+	sed -e 'N;s/SCRATCH_DEV\n/SCRATCH_DEV/g' | \
+	sed -e 'N;s/TEST_DEV\n/TEST_DEV/g'
+}
+
+_filter_project_quota()
+{
+	# Project ID 0 is always present on disk but was not reported
+	# until the GETNEXTQUOTA ioctl came into use.  Filter it out.
+	# But if you specify a name for ID 0, that means you want to
+	# deal with it by yourself, this function won't filter it out.
+	_filter_quota | grep -v "^\#0 \|^(null) "
+}
+
+# Account for different "ln" failure messages
+_filter_ln()
+{
+	sed -e "s,\(creating symbolic link .*\) to .*: ,\1: ," \
+	    -e "s,failed to create,creating,"
+}
+
+# If given an arg, filter *that* UUID string
+# Otherwise look for something that looks like a generic UUID
+_filter_uuid()
+{
+	if [ ! -z $1 ]; then
+		UUID=$1
+		sed -e "s/\(uuid[ :=]\+\) $UUID/\1 <EXACTUUID>/i"
+	else
+		sed -e "s/\(uuid[ :=]\+\) [0-9a-f-][0-9a-f-]*/\1 <UUID>/ig"
+	fi
+}
+
+# In mixed group the added disks may have zero used size
+_filter_zero_size()
+{
+	sed -e "s/0\.00/<SIZE>/g"
+}
+
+# Filter out sizes like 6.14MB etc
+_filter_size()
+{
+	sed -e "s/[0-9\.]\+\s\?[b|k|m|g|t][i]\?[b]\?/<SIZE>/ig"
+}
+
+# Convert string read from stdin like 128K to bytes and print it to stdout
+_filter_size_to_bytes()
+{
+	read size
+	suffix=${size:${#size}-1}
+	mul=1
+	case $suffix in
+		k|K) mul=1024 ;;
+		m|M) mul=$((1024*1024)) ;;
+		g|G) mul=$((1024*1024*1024)) ;;
+		t|T) mul=$((1024*1024*1024*1024)) ;;
+	esac
+	echo $((${size:0:${#size}-1}*$mul))
+}
+
+# Print trimmed bytes of fstrim
+# Starting from util-linux v2.23 fstrim usees human readable sizes in
+# verbose output
+_filter_fstrim()
+{
+	egrep -o "[0-9]+ bytes" | $AWK_PROG '{print $1}'
+}
+
+# Older mount output referred to "block device" when mounting RO devices
+# It's gone in newer versions
+_filter_ro_mount() {
+	sed -e "s/mount: block device/mount:/g" \
+	    -e "s/mount: cannot mount block device/mount: cannot mount/g"
+}
+
+_filter_od()
+{
+	BLOCK_SIZE=$(get_block_size $SCRATCH_MNT)
+	$AWK_PROG -v block_size=$BLOCK_SIZE '
+		/^[0-9]+/ {
+			offset = strtonum("0"$1);
+			$1 = sprintf("%o", offset / block_size);
+			print $0;
+		}
+		/\*/
+	'
+}
+
+# Remove quotes from failed mknod calls. Starting with Coreutils v8.25,
+# mknod errors print unquoted filenames
+_filter_mknod()
+{
+	sed -e "s/mknod: [\`']\(.*\)': File exists/mknod: \1: File exists/"
+}
+
+# make sure this script returns success
+/bin/true

@@ -1,0 +1,93 @@
+#! /bin/bash
+# FSQA Test No. 166
+#
+# ->page-mkwrite test - unwritten extents and mmap
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "exit \$status" 0 1 2 3 15
+rm -f $seqres.full
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# assumes 1st, 3rd and 5th blocks are single written blocks,
+# the others are unwritten.
+_filter_blocks()
+{
+	$AWK_PROG '
+/^ +[0-9]/ {
+	if (!written_size) {
+		written_size = $6
+		unwritten1 = ((1048576/512) / 2) - written_size
+		unwritten2 = ((1048576/512) / 2) - 2 * written_size
+	}
+
+	# is the extent unwritten?
+	unwritten_ext = 0;
+	if ($7 >= 10000)
+		unwritten_ext = 1;
+
+	size = "RIGHT"
+	flags = "GOOD"
+	if (unwritten_ext) {
+		if (unwritten1) {
+			if ($6 != unwritten1)
+				size = "WRONG"
+			unwritten1 = 0;
+		} else if ($6 != unwritten2) {
+			size = "WRONG"
+		}
+	} else {
+		if ($6 != written_size)
+			size = "WRONG"
+	}
+	print $1, "[AA..BB]", "XX..YY", "AG", "(AA..BB)", size, flags
+}'
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+_scratch_mkfs_xfs >/dev/null 2>&1
+_scratch_mount
+
+TEST_FILE=$SCRATCH_MNT/test_file
+TEST_PROG=$here/src/unwritten_mmap
+FILE_SIZE=1048576
+
+rm -f $TEST_FILE
+$TEST_PROG $FILE_SIZE $TEST_FILE
+
+xfs_bmap -vp $TEST_FILE >> $seqres.full
+xfs_bmap -vp $TEST_FILE | _filter_blocks
+
+status=0
+exit

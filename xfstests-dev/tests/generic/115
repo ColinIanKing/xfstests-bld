@@ -1,0 +1,84 @@
+#! /bin/bash
+# FS QA Test No. 115
+#
+# Moving and deleting cloned ("reflinked") files on btrfs:
+#   - Create a file and a reflink
+#   - Move both to a directory
+#   - Delete the original (moved) file, check that the copy still exists.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2014, Oracle and/or its affiliates.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.* $testdir
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/reflink
+
+# real QA test starts here
+_require_test_reflink
+_supported_os Linux
+
+_require_xfs_io_command "fiemap"
+_require_cp_reflink
+_require_test
+
+rm -f $seqres.full
+
+testdir1=$TEST_DIR/test-$seq
+rm -rf $testdir1
+mkdir $testdir1
+
+echo "Create the original files and reflink dirs"
+$XFS_IO_PROG -f -c 'pwrite -S 0x61 0 9000' $testdir1/original \
+    >> $seqres.full
+cp --reflink $testdir1/original $testdir1/copy
+
+_verify_reflink $testdir1/original $testdir1/copy
+
+echo "Move orig & reflink copy to subdir and md5sum:"
+mkdir $testdir1/subdir
+mv $testdir1/original $testdir1/subdir/original_moved
+mv $testdir1/copy $testdir1/subdir/copy_moved
+_verify_reflink $testdir1/subdir/original_moved \
+    $testdir1/subdir/copy_moved
+
+md5sum $testdir1/subdir/original_moved | _filter_test_dir
+md5sum $testdir1/subdir/copy_moved | _filter_test_dir
+
+echo "remove orig from subdir and md5sum reflink copy:"
+rm $testdir1/subdir/original_moved
+md5sum $testdir1/subdir/copy_moved | _filter_test_dir
+rm -rf $testdir1/subdir
+
+# success, all done
+status=0
+exit

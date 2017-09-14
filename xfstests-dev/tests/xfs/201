@@ -1,0 +1,99 @@
+#! /bin/bash
+# FS QA Test No. 201
+#
+# Test out the infamous xfs_btree_delrec corruption.
+#
+# Only happens on 32-bit kernels without CONFIG_LBD, but it should be harmless
+# to run this everywhere.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2009 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+	_scratch_unmount
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+file=$SCRATCH_MNT/f
+
+min_align=`_min_dio_alignment $SCRATCH_DEV`
+
+do_pwrite()
+{
+	offset=`expr $1 \* $min_align`
+	end=`expr $2 \* $min_align`
+	length=`expr $end - $offset`
+
+	xfs_io -d -f $file -c "pwrite $offset $length" >/dev/null
+}
+
+_require_scratch
+
+_scratch_mkfs_xfs >/dev/null 2>&1
+_scratch_mount
+
+# Create a fragmented file
+do_pwrite 30792 31039
+do_pwrite 30320 30791
+do_pwrite 29688 30319
+do_pwrite 29536 29687
+do_pwrite 27216 29535
+do_pwrite 24368 27215
+do_pwrite 21616 24367
+do_pwrite 20608 21615
+do_pwrite 19680 20607
+do_pwrite 19232 19679
+do_pwrite 17840 19231
+do_pwrite 16928 17839
+do_pwrite 15168 16927
+do_pwrite 14048 15167
+do_pwrite 12152 14047
+do_pwrite 11344 12151
+do_pwrite 8792 11343
+do_pwrite 6456 8791
+do_pwrite 5000 6455
+do_pwrite 1728 4999
+do_pwrite 0 1727
+
+sync
+sync
+
+# and truncate it again
+> $SCRATCH_MNT/bigfile
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

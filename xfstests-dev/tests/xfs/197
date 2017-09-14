@@ -1,0 +1,67 @@
+#! /bin/bash
+# FS QA Test No. 197
+#
+# Check that d_off can be represented in a 32 bit long type without
+# truncation.  Note that this test will always succeed on a 64 bit
+# systems where there is no smaller off_t.
+#
+# Based on a testcase from John Stanley <jpsinthemix@verizon.net>.
+#
+# http://oss.sgi.com/bugzilla/show_bug.cgi?id=808
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+	rm -rf $TEST_DIR/ttt
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_test
+
+bitsperlong=`src/feature -w`
+if [ "$bitsperlong" -ne 32 ]; then
+	_notrun "This test is only valid on 32 bit machines"
+fi
+
+mkdir $TEST_DIR/ttt
+for n in {1..168}; do
+    touch $TEST_DIR/ttt/$n;
+done
+src/t_dir_offset $TEST_DIR/ttt
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

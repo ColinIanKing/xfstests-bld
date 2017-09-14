@@ -1,0 +1,197 @@
+#! /bin/bash
+# FS QA Test No. 065
+#
+# Testing incremental dumps and cumulative restores with
+# "adding, deleting, renaming, linking, and unlinking files and
+#  directories".
+# Do different operations for each level.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/dump
+
+#
+# list recursively the directory
+#
+# e.g. lstat output: src/lstat64 31056 -rwxr-xr-x 38403,0
+# Don't print out sizes of directories - which can vary - overwrite with XXX.
+#
+_list_dir()
+{
+    __dir=$1
+    find $__dir  -exec $here/src/lstat64 -t {} \; |\
+    sed -e 's/.*dumpdir/dumpdir/' -e '/^dumpdir /d' |\
+    sed -e 's/.*restoredir/restoredir/' -e '/^restoredir /d' |\
+    egrep -v 'housekeeping|dirattr|dirextattr|namreg|state|tree' |\
+    awk '$3 ~ /^d/ { $2 = "XXX" } {print}' |\
+    LC_COLLATE=POSIX sort
+} 
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+#
+# too much hassle to get output matching with quotas turned on
+# so don't run it
+#
+_scratch_unmount 2>/dev/null
+_scratch_mount
+$here/src/feature -U $SCRATCH_DEV && \
+	_notrun "UQuota enabled, test needs controlled xfsdump output"
+$here/src/feature -G $SCRATCH_DEV && \
+	_notrun "GQuota enabled, test needs controlled xfsdump output"
+$here/src/feature -P $SCRATCH_DEV && \
+	_notrun "PQuota enabled, test needs controlled xfsdump output"
+_scratch_unmount
+
+#
+# adding      - touch/echo, mkdir
+# deleting    - rm, rmdir
+# renaming    - mv
+# linking     - ln
+# unlinking   - rm
+# files and directories
+#
+
+_wipe_fs
+mkdir -p $dump_dir || _fail "cannot mkdir \"$dump_dir\""
+cd $dump_dir
+
+echo "Do the incremental dumps"
+i=0
+num_dumps=8 # do some extra to ensure nothing changes
+while [ $i -le $num_dumps ]; do
+    cd $dump_dir
+    case $i in
+	0)
+	    # adding
+	    echo 'add0' >addedfile0
+	    echo 'add1' >addedfile1
+	    echo 'add2' >addedfile2
+	    echo 'add3' >addedfile3
+	    mkdir addeddir1
+	    mkdir addeddir2
+	    mkdir addeddir3
+	    mkdir addeddir4
+	    echo 'add4' >addeddir3/addedfile4
+	    echo 'add5' >addeddir4/addedfile5
+	    ;;
+	1)
+	    # deleting
+	    rm addedfile2
+	    rmdir addeddir2
+	    rm -rf addeddir3
+	    ;;
+	2)
+	    # renaming
+	    mv addedfile1 addedfile2 # rename to previous existing file
+	    mv addeddir4/addedfile5 addeddir4/addedfile4
+	    mv addeddir4 addeddir6
+	    mv addeddir1 addeddir2 # rename to previous existing dir
+	    ;;
+	3)
+	    # linking
+	    ln addedfile0 linkfile0
+	    ln addedfile0 linkfile0_1  # have a 2nd link to file
+	    ln addedfile2 linkfile2
+	    ln addeddir6/addedfile4 linkfile64
+	    ;;
+	4)
+	    # unlinking
+	    rm linkfile0  # remove a link
+	    rm addedfile2 # remove original link
+	    rm linkfile64  # remove link
+	    rm addeddir6/addedfile4 # remove last link
+	    ;;
+	5)  # link first - then onto 6)
+	    rm -rf *
+	    echo 'add6' >addedfile6
+	    ln addedfile6 linkfile6_1
+	    ln addedfile6 linkfile6_2
+	    ln addedfile6 linkfile6_3
+	    ;;
+	6)  # then move the inode that the links point to
+      	    mv addedfile6 addedfile6_mv
+	    rm linkfile6_1
+	    rm linkfile6_2
+	    rm linkfile6_3
+	    ln addedfile6_mv linkfile6_mv_1
+	    ln addedfile6_mv linkfile6_mv_2
+	    ln addedfile6_mv linkfile6_mv_3
+	    ;;
+    esac
+    cd $here
+    sleep 2
+    _stable_fs
+
+    echo "Listing of what files we have at level $i:"
+    _list_dir $dump_dir	| tee $tmp.ls.$i
+
+    _do_dump_file -f $tmp.df.level$i -l $i
+    let i=$i+1
+done
+
+echo "Look at what files are contained in the inc. dump"
+i=0
+while [ $i -le $num_dumps ]; do
+    echo ""
+    echo "restoring from df.level$i"
+    _do_restore_toc -f $tmp.df.level$i
+    let i=$i+1
+done
+
+echo "Do the cumulative restores"
+_prepare_restore_dir
+i=0
+while [ $i -le $num_dumps ]; do
+    echo ""
+    echo "restoring from df.level$i"
+    _do_restore_file_cum -f $tmp.df.level$i
+    echo "list restore_dir"
+    _list_dir $restore_dir | _check_quota_file | tee $tmp.restorals.$i
+    let i=$i+1
+done
+
+echo ""
+echo "Do the ls comparison"
+i=0
+while [ $i -le $num_dumps ]; do
+    echo "Comparing ls of FS with restored FS at level $i"
+    diff -s $tmp.ls.$i $tmp.restorals.$i | sed "s#$tmp#TMP#g"
+    echo ""
+    let i=$i+1
+done
+
+# success, all done
+status=0
+exit

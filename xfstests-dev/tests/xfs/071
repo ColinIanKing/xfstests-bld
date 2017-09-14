@@ -1,0 +1,171 @@
+#! /bin/bash
+# FS QA Test No. 071
+#
+# Exercise IO at large file offsets.
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seqfull=$0
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+rm -f $seqres.full
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+    _scratch_unmount 2>/dev/null
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+bitsperlong=`src/feature -w`
+# link correct .out file
+rm -f $seqfull.out
+if [ "$bitsperlong" -eq 32 ]; then
+	ln -s $seq.out.32 $seqfull.out
+else
+	ln -s $seq.out.64 $seqfull.out
+fi
+
+_filter_io()
+{
+    sed -e "s/$dbsize/1FSB/g" -e '/.* ops; /d'
+}
+
+_filter_off()
+{
+    sed -e "s/$1/<OFFSET>/g" | _filter_io
+}
+
+_filter_pwrite()
+{
+	sed -e "s/pwrite64: Invalid argument/pwrite64: File too large/g"
+}
+
+_filter_pread()
+{
+	sed -e "s/pread64: Invalid argument/read 0\/$bytes bytes at offset <OFFSET>/g" | _filter_io
+}
+
+write_block()
+{
+    location=$1
+    words=$2
+    offset=$3
+    bytes=$4
+    direct=$5
+
+    [ `$direct` ] && flags=-d
+
+    echo "Writing $bytes bytes, offset is $words (direct=$direct)" | _filter_io
+    echo "Writing $bytes bytes at $location $words (direct=$direct)" >>$seqres.full
+    $XFS_IO_PROG -c "pwrite $offset 512" $flags $SCRATCH_MNT/$seq \
+	2>&1 | _filter_off $offset | tee -a $seqres.full | _filter_pwrite
+    xfs_bmap -v $SCRATCH_MNT/$seq >>$seqres.full
+
+    echo "Reading $bytes bytes (direct=$direct)" | _filter_io
+    echo "Reading $bytes bytes at $location (direct=$direct)" >>$seqres.full
+    $XFS_IO_PROG -c "pread $offset $bytes" $flags $SCRATCH_MNT/$seq \
+	2>&1 | _filter_off $offset | tee -a $seqres.full | _filter_pread
+
+    $XFS_IO_PROG -c "pread -v $offset $bytes" $flags $SCRATCH_MNT/$seq >>$seqres.full 2>&1
+
+    echo | tee -a $seqres.full
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+[ -n "$XFS_IO_PROG" ] || _notrun "xfs_io executable not found"
+
+_require_scratch
+_scratch_mkfs_xfs | _filter_mkfs 2>$tmp.mkfs
+. $tmp.mkfs
+echo
+_scratch_mount
+
+# Okay... filesize limit depends on blocksize, bits per long and
+# also if large block device patch is enabled (can't dynamically
+# check that, so use env var USE_LBD_PATCH to override default).
+#
+# Note:
+# We check from 1Tb below our guessed limit to 1Tb above it, and
+# see what happens for each 1Tb increment along the way (first
+# half should succeed, second half should fail to create a file).
+# So, number calculated here is not the actual limit, its a ways
+# above that, hopefully.
+
+if [ "$bitsperlong" -eq 32 ]; then
+    upperbound=`expr $dbsize / 512`
+    # which is 8(TB) for 4K, 4(TB) for 2k, ... etc.
+    [ "$USE_LBD_PATCH" = yes ] && upperbound=16
+    # limited by page cache index when LBD patch onboard.
+else
+    upperbound=`echo 8 \* 1024 \* 1024 | bc`
+    # 8 exabytes (working in TBs below)
+fi
+
+# Step from (upperbound-1)(Tb) through (upperbound+1(Tb), &
+# seeks/writes/reads on each boundary (using holey files) -
+# 1byte back from the boundary, and 1FSB back from the same
+# boundary (and stash xfs_bmap output), before moving onto
+# each new test point.
+
+$XFS_IO_PROG -c "truncate 0" -f $SCRATCH_MNT/$seq
+
+oneTB=`echo 1024 \* 1024 \* 1024 \* 1024 | bc`
+count=`expr $upperbound - 1`
+upperbound=`expr $upperbound + 1`
+
+while [ $count -le $upperbound ]
+do
+    # buffered IO
+    offset=`echo $oneTB \* $count | bc`
+    write_block $count "+0" $offset 512 false
+    offset=`echo $oneTB \* $count \- 1 | bc`
+    write_block $count "minus 1 byte" $offset 512 false
+    offset=`echo $oneTB \* $count \- $dbsize | bc`
+    write_block $count "minus 1FSB" $offset 512 false
+    write_block $count "minus 1FSB" $offset 1 false
+
+    # direct IO
+    offset=`echo $oneTB \* $count | bc`
+    write_block $count "+0" $offset $dbsize true
+    offset=`echo $oneTB \* $count \- 1 | bc`
+    write_block $count "minus 1FSB" $offset $dbsize true
+
+    echo === Iterating, `expr $upperbound - $count` remains
+    echo
+    echo
+    let count=$count+1
+done
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,111 @@
+#! /bin/bash
+# FS QA Test No. 121
+#
+# To test log replay for the unlinked list.
+# So we create unlinked and still referenced inodes
+# and make sure that no clearing of the unlinked AGI buckets
+# are happening.
+# See pv#953263.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+rm -f $seqres.full
+rm -f $tmp.log
+
+_require_scratch
+
+echo "mkfs"
+_scratch_mkfs_xfs >>$seqres.full 2>&1 \
+    || _fail "mkfs scratch failed"
+
+echo "mount"
+_scratch_mount >>$seqres.full 2>&1 \
+    || _fail "mount failed: $MOUNT_OPTIONS"
+
+# num_files must be greater than 64 (XFS_AGI_UNLINKED_BUCKETS)
+# so that there will be at least one linked list from one of
+# the 64 buckets, so that we can decode a di_next_unlinked field
+num_files=200
+delay=5
+echo "open and unlink $num_files files"
+src/multi_open_unlink -f $SCRATCH_MNT/test_file -n $num_files -s $delay &
+
+# time to create and unlink all the files
+sleep 3
+
+echo "godown"
+src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+# time for multi_open_unlink to exit out after its delay
+# so we have no references and can unmount
+wait 2>/dev/null
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after going down..."
+_print_logstate
+
+echo "mount with replay"
+_scratch_mount $mnt >>$seqres.full 2>&1 \
+    || _fail "mount failed: $mnt $MOUNT_OPTIONS"
+
+echo "godown"
+src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after going down..."
+_print_logstate
+
+echo "logprint to check for CLEAR_AGI_BUCKET..."
+if _scratch_xfs_logprint -t | tee -a $seqres.full | grep CLEAR; then
+	echo 'CLEAR_AGI_BUCKET transactions found!!'
+	echo 'Are you running with an old xfs kernel - where the bug still exists?'
+else
+	echo 'No CLEAR_AGI_BUCKET found in transactions - great - test passed :)'
+fi
+
+# clean up dirty log with log recovery on mount
+_scratch_mount >> $seqres.full 2>&1 \
+    || _fail "mount failed"
+
+# success, all done
+status=0
+exit

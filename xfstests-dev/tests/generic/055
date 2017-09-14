@@ -1,0 +1,155 @@
+#! /bin/bash
+# FS QA Test No. 055
+#
+# * like 054 but want to create more/different kinds of metadata
+#   and so will use fsstress
+# * also can interrupt metadata with godown
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+. ./common/quota
+
+_do_meta()
+{
+    out=$SCRATCH_MNT/fsstress
+    count=10000
+    param="-p 4 -z -f rmdir=10 -f link=10 -f creat=10 -f mkdir=10 \
+           -f rename=30 -f stat=30 -f unlink=30 -f truncate=20"
+    _echofull "calling fsstress $param -m8 -n $count"
+    FSSTRESS_ARGS=`_scale_fsstress_args $param $FSSTRESS_AVOID -m 8 -n $count -d $out`
+    if ! $FSSTRESS_PROG $FSSTRESS_ARGS >>$seqres.full 2>&1
+    then
+	_echofull "fsstress failed"
+    fi
+}
+
+_get_quota_option()
+{
+    case $FSTYP in
+    xfs)
+        _require_xfs_quota
+        echo "-o uquota"
+        ;;
+    *)
+        ;;
+    esac
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+
+rm -f $seqres.full $tmp.*
+_require_scratch
+_require_scratch_shutdown
+_require_logstate
+
+QUOTA_OPTION=`_get_quota_option`
+
+echo "*** init FS"
+_scratch_unmount >/dev/null 2>&1
+
+_get_log_configs > $tmp.seq.params
+
+cat $tmp.seq.params \
+| while read mkfs mnt restofline
+do
+    if [ "$mkfs" = "#" ]; then
+	continue
+    fi
+
+    echo "--- mkfs=$mkfs, mnt=$mnt ---" >> $seqres.full
+    export MKFS_OPTIONS="-l $mkfs"
+    export MOUNT_OPTIONS="-o $mnt"
+
+    # mkfs the FS
+    _echofull "mkfs"
+    _scratch_mkfs >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then
+	_echofull "mkfs failed: $MKFS_OPTIONS"
+	continue
+    fi
+
+    # mount the FS
+    _echofull "mount"
+    if ! _scratch_mount $QUOTA_OPTION >>$seqres.full 2>&1; then
+	_echofull "mount failed: $MOUNT_OPTIONS"
+	continue
+    fi
+
+    # create the metadata
+    _do_meta
+
+    # check before on what FS should look like
+    _echofull "ls -RF SCRATCH_MNT"
+    ls -RF $SCRATCH_MNT >$tmp.ls1
+
+    _echofull "godown"
+    src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+    _echofull "unmount"
+    _scratch_unmount >>$seqres.full 2>&1 \
+	|| _fail "umount failed"
+
+    _echofull "logprint after going down..."
+    _print_logstate
+
+    _full "logprint headers"
+    _scratch_xfs_logprint -n >>$seqres.full 2>&1
+
+    _echofull "mount with replay"
+    _scratch_mount $QUOTA_OPTION >>$seqres.full 2>&1 \
+	|| _fail "mount failed: $MOUNT_OPTIONS"
+
+    # check on what FS looks like after log recovery
+    _echofull "ls -RF SCRATCH_MNT"
+    ls -RF $SCRATCH_MNT >$tmp.ls2
+
+    _echofull "diff ls before and after"
+    diff -us $tmp.ls1 $tmp.ls2 | sed "s#$tmp#TMP#g"
+
+    _echofull "unmount"
+    _scratch_unmount
+
+    _echofull "logprint after mount and replay..."
+    _print_logstate
+
+    if _check_scratch_fs; then
+	_echofull "filesystem is checked ok"
+    else
+	_echofull "filesystem is NOT ok"
+    fi
+done
+
+status=0
+exit

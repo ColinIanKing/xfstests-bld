@@ -1,0 +1,161 @@
+#! /bin/bash
+# FS QA Test No. 075
+#
+# fsx (non-AIO variant)
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -rf $TEST_DIR/fsx.* $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_do_test()
+{
+    _n="$1"
+    _param="$2"
+
+    out=$TEST_DIR/fsx
+    rm -rf $out
+    if ! mkdir $out
+    then
+	echo "    failed to mkdir $out"
+	status=1
+	exit
+    fi
+
+    _filter_param=`echo "$_param" | sed\
+	-e 's/-N [0-9][0-9]*/-N numops/' \
+	-e 's/-l [0-9][0-9]*/-l filelen/'`
+
+    echo ""
+    echo "-----------------------------------------------"
+    echo "fsx.$_n : $_filter_param"
+    echo "-----------------------------------------------"
+
+    if [ "$FSTYP" != "xfs" ]
+    then
+	if [ "$_n" = "1" -o "$_n" = "3" ]
+	then
+	    # HACK: only xfs handles preallocation (-x) so just skip this test
+	    return
+	fi
+    fi
+
+    # This cd and use of -P gets full debug on $here (not TEST_DEV)
+    cd $out
+    if ! $here/ltp/fsx $_param -P $here $seq.$_n $FSX_AVOID &>/dev/null
+    then
+	echo "    fsx ($_param) failed, $? - compare $seqres.$_n.{good,bad,fsxlog}"
+	mv $out/$seq.$_n $seqres.$_n.full
+	mv $here/$seq.$_n.fsxlog $seqres.$_n.fsxlog
+	od -xAx $seqres.$_n.full > $seqres.$_n.bad
+	od -xAx $here/$seq.$_n.fsxgood > $seqres.$_n.good
+	rm -f $here/$seq.$_n.fsxgood
+	status=1
+	exit
+    fi
+
+    cd $here
+    _check_test_fs
+}
+
+_usage()
+{
+    echo "$0: [-l filelen] [-n numops1] [-N numops2]"
+}
+
+_process_args()
+{
+    while getopts "l:n:N:?" c $@
+    do
+        case $c
+        in
+            l)
+                filelen=$OPTARG
+		param_type="$param_type, overidde -l"
+                ;;
+            N)
+                numops2=$OPTARG
+		param_type="$param_type, overidde -N"
+                ;;
+            n)
+                numops1=$OPTARG
+		param_type="$param_type, overidde -n"
+                ;;
+	    ?)
+		_usage
+		exit	
+		;;
+	esac
+    done
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+_require_test
+
+size10=`expr 10 \* 1024 \* 1024`	# 10 megabytes
+filelen=$size10
+numops1=1000
+numops2=10000
+
+# can override the params here
+_process_args "$@"
+
+echo "Params are for $param_type" >>$seqres.full
+echo "Params: n = $numops1 N = $numops2 l = $filelen" >>$seqres.full
+
+rm -f $seqres.full
+echo "brevity is wit..."
+
+_check_test_fs
+
+# Options:
+# -d: debug output for all operations
+# -l flen: the upper bound on file size (default 262144)
+# -o oplen: the upper bound on operation size
+# -N numops: total # operations to do (default infinity)
+# -P: save .fsxlog and .fsxgood files in dirpath (default ./)
+# -S seed: for random # generator (default 1) 0 gets timestamp
+# -x: pre-allocate file space, exercising unwritten extents
+
+_do_test 0 "-d -N $numops1 -S 0"
+_do_test 1 "-d -N $numops1 -S 0 -x"
+_do_test 2 "-d -N $numops2 -l $filelen -S 0"
+_do_test 3 "-d -N $numops2 -l $filelen -S 0 -x"
+
+rm -f $seq.*.fsx{good,log}
+exit 0

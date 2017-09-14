@@ -1,0 +1,35 @@
+QA output created by 095
+Blocks modified: [135 - 164]
+Blocks modified: [768 - 792]
+File contents before power failure:
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+207 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+226 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+257 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+1137 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1175 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+1400 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+1431
+File contents after log replay:
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+207 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+226 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+257 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+1137 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+1175 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+1400 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+1431

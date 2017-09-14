@@ -1,0 +1,84 @@
+#! /bin/bash
+# FS QA Test No. 047
+#
+# invutil with interactive responses
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/dump
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+# wipe test dir clean first
+# so dump can be real quick
+_wipe_fs
+
+#
+# Create 5 dumps
+# and on the 3rd dump note the date
+# which we'll use to prune against using xfsinvutil
+#
+i=0
+while [ $i -lt 5 ]; do
+    _do_dump_file -L "session.$i"
+    if [ $i -eq 2 ]; then
+       sleep 1
+       middate=`date '+%m/%d/%Y %T'`
+    fi
+    rm $dump_file
+    sleep 2
+    let i=$i+1
+done
+
+echo "middate = $middate" >>$seqres.full
+
+# Only say No to 1st question to prune
+cat >$tmp.input <<EOF
+N
+Y
+Y
+Y
+Y
+EOF
+
+#
+# Now do the xfsinvutil and
+# look and the inventory before and after
+# to see if it did the job
+#
+_dump_inventory
+_do_invutil <$tmp.input
+_dump_inventory
+
+status=0
+exit

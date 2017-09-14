@@ -1,0 +1,135 @@
+# QA groups control file
+# Defines test groups and nominal group owners
+# - do not start group names with a digit
+# - comment line before each group is "new" description
+#
+001 auto quick subvol snapshot
+002 auto snapshot
+003 auto replace
+004 auto rw metadata
+005 auto defrag
+006 auto quick
+007 auto quick rw metadata send
+008 auto quick send
+009 auto quick subvol
+010 auto quick defrag
+011 auto replace
+012 auto convert
+013 auto quick balance
+014 auto balance
+015 auto quick snapshot
+016 auto quick send
+017 auto quick qgroup
+018 auto quick subvol
+019 auto quick send
+020 auto quick replace
+021 auto quick balance defrag
+022 auto qgroup
+023 auto
+024 auto quick compress
+025 auto quick send clone
+026 auto quick compress prealloc
+027 auto replace
+028 auto qgroup balance
+029 auto quick clone
+030 auto quick send
+031 auto quick subvol clone
+032 auto quick remount
+033 auto quick send snapshot
+034 auto quick send
+035 auto quick clone
+036 auto quick send snapshot
+037 auto quick compress
+038 auto quick compress send
+039 auto quick send
+040 auto quick send
+041 auto quick compress
+042 auto quick qgroup
+043 auto quick send
+044 auto quick send
+045 auto quick send
+046 auto quick send
+047 auto quick send
+048 auto quick
+049 auto quick
+050 auto quick send
+051 auto quick send
+052 auto quick clone
+053 auto quick send
+054 auto quick send
+055 auto quick clone
+056 auto quick clone
+057 auto quick
+058 auto quick send snapshot
+059 auto quick
+060 auto balance subvol
+061 auto balance scrub
+062 auto balance defrag compress
+063 auto balance remount compress
+064 auto balance replace
+065 auto subvol replace
+066 auto subvol scrub
+067 auto subvol defrag compress
+068 auto subvol remount compress
+069 auto replace scrub
+070 auto replace defrag compress
+071 auto replace remount compress
+072 auto scrub defrag compress
+073 auto scrub remount compress
+074 auto defrag remount compress
+075 auto quick subvol
+076 auto quick compress
+077 auto quick send snapshot
+078 auto snapshot
+079 auto rw metadata
+080 auto snapshot
+081 auto quick clone
+082 auto quick remount
+083 auto quick send
+084 auto quick send
+085 auto quick metadata subvol
+086 auto quick clone
+087 auto quick send
+088 auto quick metadata
+089 auto quick subvol
+090 auto quick metadata
+091 auto quick qgroup
+092 auto quick send
+093 auto quick clone
+094 auto quick send
+095 auto quick metadata
+096 auto quick clone
+097 auto quick send clone
+098 auto quick metadata clone
+099 auto quick qgroup
+100 auto replace
+101 auto replace
+102 auto quick metadata enospc
+103 auto quick clone compress
+104 auto qgroup
+105 auto quick send
+106 auto quick clone compress
+107 auto quick prealloc
+108 auto quick send clone punch
+109 auto quick send clone compress
+110 auto quick send
+111 auto quick send
+112 auto quick clone
+113 auto quick compress clone
+114 auto qgroup
+115 auto qgroup
+116 auto quick metadata
+117 auto quick send clone
+118 auto quick snapshot metadata
+119 auto quick snapshot metadata qgroup
+120 auto quick snapshot metadata
+121 auto quick snapshot qgroup
+122 auto quick snapshot qgroup
+123 auto quick qgroup
+124 auto replace
+125 auto replace
+126 auto quick qgroup
+127 auto quick send
+128 auto quick send
+129 auto quick send
+130 auto clone send

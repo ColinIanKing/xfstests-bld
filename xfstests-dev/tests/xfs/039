@@ -1,0 +1,55 @@
+#! /bin/bash
+# FS QA Test No. 039
+#
+# Test xfsdump/restore to a remote IRIX tape 
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seqfull=$0
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/dump
+
+# link correct .out file
+_link_out_file
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_require_tape $RMT_IRIXTAPE_DEV
+_create_dumpdir_fill
+_erase_soft
+_do_dump -o -F
+_do_restore
+_diff_compare
+
+# success, all done
+status=0
+exit

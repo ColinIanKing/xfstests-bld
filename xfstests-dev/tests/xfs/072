@@ -1,0 +1,83 @@
+#! /bin/bash
+# FS QA Test No. 072
+#
+# Check some unwritten extent boundary conditions
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+_cleanup()
+{
+	cd /
+	rm -f $tmp.*
+	_scratch_unmount 2>/dev/null
+}
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+[ -n "$XFS_IO_PROG" ] || _notrun "xfs_io executable not found"
+
+_require_scratch
+
+rm -f $seqres.full
+_scratch_unmount >/dev/null 2>&1
+
+_scratch_mkfs_xfs >/dev/null	|| _fail "mkfs failed"
+_scratch_mount >/dev/null	|| _fail "mount failed"
+
+# check there's enough freespace on $SCRATCH_MNT ... (1GiB + 1MiB)
+avail=`df -P $SCRATCH_MNT | awk 'END {print $4}'`
+[ "$avail" -ge 1049600 ] || _notrun "Scratch device is too small ($avail KiB)"
+
+echo Silence is golden
+
+# reserve 1GiB, truncate at 100bytes
+$XFS_IO_PROG -f -c 'resvsp 0 1g' -c 'truncate 100' $SCRATCH_MNT/ouch
+rm -f $SCRATCH_MNT/ouch
+
+# reserve 1GiB, truncate at 1GiB
+$XFS_IO_PROG -f -c 'resvsp 0 1g' -c 'truncate 1g' $SCRATCH_MNT/ouch
+rm -f $SCRATCH_MNT/ouch
+
+# reserve 1GiB, truncate at 2GiB
+$XFS_IO_PROG -f -c 'resvsp 0 1g' -c 'truncate 2g' $SCRATCH_MNT/ouch
+rm -f $SCRATCH_MNT/ouch
+
+# reserve 1GiB, 1GiB hole, reserve 1MiB, truncate at 3GiB
+$XFS_IO_PROG -f -c 'resvsp 0 1g' -c 'resvsp 2g 1m' -c 'truncate 3g' $SCRATCH_MNT/ouch
+rm -f $SCRATCH_MNT/ouch
+
+# success, all done
+status=0
+exit

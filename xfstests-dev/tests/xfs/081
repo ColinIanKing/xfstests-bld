@@ -1,0 +1,85 @@
+#! /bin/bash
+# FS QA Test No. 081
+#
+# To test out logprint with quotas
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+. ./common/quota
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_cleanup()
+{
+    cd /
+    _cleanup_logfiles
+    rm -f $tmp.*
+    echo "*** unmount"
+    _scratch_unmount 2>/dev/null
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# prelim
+rm -f $seqres.full $tmp.*
+_require_scratch
+_require_xfs_quota
+_require_v2log
+ 
+echo "*** init FS"
+_scratch_unmount >/dev/null 2>&1
+
+# do a simple quota test to ensure DQUOT data is happening
+export MOUNT_OPTIONS="-o quota,gquota"
+
+if [ "$HOSTOS" = "IRIX" ]; then 
+    start=0
+else
+    start=2
+fi
+
+# mount with quotas?
+_scratch_mkfs_xfs "-l version=1" 1>/dev/null 2>&1
+_qmount
+src/feature -u $SCRATCH_DEV || _notrun "No quota support at mount time"
+_scratch_unmount
+
+_mkfs_log "-l version=1"
+_create_log
+_check_log
+_print_transaction_inode $start
+_cmp_output $seq.ugquota.trans_inode $filtered
+
+# got thru it all so we may have success
+status=0
+exit

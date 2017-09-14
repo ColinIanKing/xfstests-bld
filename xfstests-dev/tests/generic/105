@@ -1,0 +1,100 @@
+#! /bin/bash
+# FS QA Test No. 105
+#
+# Test fix of bug:
+#   930290 - xfs directory with no exec perm in ACL denies access
+#            and breaks CAPP evaluation
+#   which pulls out an earlier mod
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# Modify as appropriate.
+_supported_fs generic
+_supported_os IRIX Linux
+
+# real QA test starts here
+
+rm -f $seqres.full
+
+_require_scratch
+_require_acls
+
+_acl_setup_ids
+
+_scratch_unmount >/dev/null 2>&1
+echo "*** MKFS ***"                         >>$seqres.full
+echo ""                                     >>$seqres.full
+_scratch_mkfs                               >>$seqres.full 2>&1 \
+	|| _fail "mkfs failed"
+_scratch_mount                              >>$seqres.full 2>&1 \
+	|| _fail "mount failed"
+
+cd $SCRATCH_MNT
+
+# create a dir with out execute perms
+mkdir -m 600 subdir
+
+# make it owned by $acl1
+chown $acl1 subdir
+
+# put a file in the directory
+echo data > subdir/file
+_ls_l subdir/file | awk '{ print $1, $3 }'
+
+# add an ACL with a user ACE which has no exec permission 
+if [ "$HOSTOS" == "Linux" ]; then
+    setfacl -m u:$acl1:r subdir
+elif [ "$HOSTOS" == "IRIX" ]; then
+    chacl u:$acl:r--,g::---,o::--- subdir
+else
+    echo "Unknown OS!"
+    exit 1
+fi
+
+# With the bug this gives: `ls: subdir/file: Permission denied'
+# because one needs at least an exec perm somewhere in acl
+# However, this should not hold true for directories.
+_ls_l subdir/file | awk '{ print $1, $3 }'
+
+# With the bug this gives: `subdir/file2: Permission denied'.
+echo data2 > subdir/file2
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,62 @@
+#! /bin/bash
+# FSQA Test No. 129
+#
+# looptests created from CXFSQA test looptest
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+echo_and_run()
+{
+    echo "$1"
+    $1
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+
+_require_scratch
+_require_sparse_files
+
+_scratch_mkfs >/dev/null 2>&1
+_scratch_mount "-o nosuid"
+
+mkdir $SCRATCH_MNT/looptest
+
+src/looptest -i 100000 -r -w -b 8192 -s $SCRATCH_MNT/looptest/looptest1.tst
+src/looptest -i 10000 -t -r -w -s -b 102400 $SCRATCH_MNT/looptest/looptest2.tst
+src/looptest -i 50000 -r -w -b 256 -s $SCRATCH_MNT/looptest/looptest3.tst
+src/looptest -i 2000 -o -r -w -b 8192 -s $SCRATCH_MNT/looptest/looptest4.tst
+
+status=0
+exit

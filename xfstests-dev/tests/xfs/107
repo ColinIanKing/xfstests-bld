@@ -1,0 +1,153 @@
+#! /bin/bash
+# FS QA Test No. 107
+#
+# Project quota.
+# Use of "sync" mount option here is an attempt to get deterministic
+# allocator behaviour.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2005 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/quota
+
+filter_xfs_quota()
+{
+	perl -ne "
+s,$target,[TARGET],;
+s,$tmp.projects,[PROJECTS_FILE],;
+s,$SCRATCH_MNT,[SCR_MNT],;
+s,$SCRATCH_DEV,[SCR_DEV],;
+s/Inode: \#\d+ \(0 blocks, 0 extents\)/Inode: #[INO] (0 blocks, 0 extents)/;
+s/Inode: \#\d+ \(\d+ blocks, \d+ extents\)/Inode: #[INO] (X blocks, Y extents)/;
+	print;"
+}
+
+_supported_fs xfs
+_supported_os Linux #IRIX
+_require_scratch
+_require_xfs_quota
+
+# real QA test starts here
+_scratch_mkfs_xfs | _filter_mkfs 2>$tmp.mkfs
+cat $tmp.mkfs >$seqres.full
+. $tmp.mkfs
+
+# setup a default run
+if [ -z "$MOUNT_OPTIONS" ]; then
+	export MOUNT_OPTIONS="-o pquota,sync"
+else
+	export MOUNT_OPTIONS="$MOUNT_OPTIONS -o sync"
+fi
+
+_qmount
+_require_prjquota $SCRATCH_DEV
+
+echo "### create projects file"
+rm -f $tmp.projects
+target=$SCRATCH_MNT/project
+echo "6:$target" | tee -a $seqres.full > $tmp.projects
+
+echo "### populate filesystem"
+mkdir $target		|| exit
+$FSSTRESS_PROG -z -s 65261 -m 8 -n 1000 -p 4 \
+-f allocsp=1 \
+-f chown=3 \
+-f creat=4 \
+-f dwrite=4 \
+-f fallocate=1 \
+-f fdatasync=1 \
+-f fiemap=1 \
+-f freesp=1 \
+-f fsync=1 \
+-f link=1 \
+-f mkdir=2 \
+-f punch=1 \
+-f rename=2 \
+-f resvsp=1 \
+-f rmdir=1 \
+-f setxattr=1 \
+-f sync=1 \
+-f truncate=2 \
+-f unlink=1 \
+-f unresvsp=1 \
+-f write=4 \
+-d $target
+
+$FSSTRESS_PROG -z -s 47806 -m 8 -n 500 -p 4 \
+-f chown=250 \
+-f setxattr=250 \
+-d $target
+
+QARGS="-x -D $tmp.projects -P /dev/null $SCRATCH_MNT"
+
+echo "### initial report"
+xfs_quota -c 'quot -p' -c 'quota -ip 6' $QARGS | filter_xfs_quota
+
+echo "### check the project, should give warnings"
+xfs_quota -c 'project -c 6' $QARGS | LC_COLLATE=POSIX sort | filter_xfs_quota
+
+echo "### recursively setup the project"
+xfs_quota -c 'project -s 6' $QARGS | LC_COLLATE=POSIX sort | filter_xfs_quota
+xfs_quota -c 'quota -ip 6' $QARGS | filter_xfs_quota
+
+echo "### check the project, should give no warnings now"
+xfs_quota -c 'project -c 6' $QARGS | LC_COLLATE=POSIX sort | filter_xfs_quota
+
+echo "### deny a hard link - wrong project ID"
+rm -f $SCRATCH_MNT/outer $target/inner
+$XFS_IO_PROG -f -c 'chproj 789' $SCRATCH_MNT/outer
+ln $SCRATCH_MNT/outer $target/inner 2>/dev/null
+if [ $? -eq 0 ]; then
+	echo hard link succeeded
+	ls -ld $SCRATCH_MNT/outer $target/inner
+else
+	echo hard link failed
+fi
+xfs_quota -c 'quota -ip 6' $QARGS | filter_xfs_quota
+
+echo "### allow a hard link - right project ID"
+$XFS_IO_PROG -c 'chproj 6' $SCRATCH_MNT/outer
+ln $SCRATCH_MNT/outer $target/inner
+if [ $? -eq 0 ]; then
+	echo hard link succeeded
+else
+	echo hard link failed
+	ls -ld $SCRATCH_MNT/outer $target/inner
+fi
+xfs_quota -c 'quota -ip 6' $QARGS | filter_xfs_quota
+
+echo "### recursively clear the project"
+xfs_quota -c 'project -C 6' $QARGS | LC_COLLATE=POSIX sort | filter_xfs_quota
+#no output...
+xfs_quota -c 'quota -ip 6' $QARGS | filter_xfs_quota
+
+status=0
+exit

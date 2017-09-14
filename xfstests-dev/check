@@ -1,0 +1,714 @@
+#!/bin/bash
+#
+# Control script for QA
+#
+# Copyright (c) 2000-2002,2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+
+tmp=/tmp/$$
+status=0
+needwrap=true
+needsum=true
+n_try=0
+try=""
+n_bad=0
+sum_bad=0
+bad=""
+notrun=""
+interrupt=true
+diff="diff -u"
+showme=false
+have_test_arg=false
+randomize=false
+export here=`pwd`
+xfile=""
+
+DUMP_OUTPUT=false
+
+# start the initialisation work now
+iam=check
+
+export MSGVERB="text:action"
+export QA_CHECK_FS=${QA_CHECK_FS:=true}
+
+# number of diff lines from a failed test, 0 for whole output
+export DIFF_LENGTH=${DIFF_LENGTH:=10}
+
+# by default don't output timestamps
+timestamp=${TIMESTAMP:=false}
+
+rm -f $tmp.list $tmp.tmp $tmp.grep $here/$iam.out $tmp.xlist
+
+SRC_GROUPS="generic shared"
+export SRC_DIR="tests"
+
+usage()
+{
+    echo "Usage: $0 [options] [testlist]"'
+
+check options
+    -nfs                test NFS
+    -cifs               test CIFS
+    -overlay		test overlay
+    -tmpfs              test TMPFS
+    -l			line mode diff
+    -udiff		show unified diff (default)
+    -n			show me, do not run tests
+    -T			output timestamps
+    -r			randomize test order
+    -d			dump test output to stdout
+    --large-fs		optimise scratch device for large filesystems
+    -s section		run only specified section from config file
+    -S section		exclude the specified section from the config file
+
+testlist options
+    -g group[,group...]	include tests from these groups
+    -x group[,group...]	exclude tests from these groups
+    -X file		exclude individual tests
+    -E external_file	exclude individual tests
+    [testlist]		include tests matching names in testlist
+'
+	    exit 0
+}
+
+get_group_list()
+{
+	grp=$1
+
+	for d in $SRC_GROUPS $FSTYP; do
+		if ! test -d "$SRC_DIR/$d" ; then
+			continue
+		fi
+		l=$(sed -n < $SRC_DIR/$d/group \
+			-e 's/#.*//' \
+			-e 's/$/ /' \
+			-e "s;^\($VALID_TEST_NAME\).* $grp .*;$SRC_DIR/$d/\1;p")
+		grpl="$grpl $l"
+	done
+	echo $grpl
+}
+
+# Find all tests, excluding files that are test metadata such as group files.
+# It matches test names against $VALID_TEST_NAME defined in common/rc
+get_all_tests()
+{
+	touch $tmp.list
+	for d in $SRC_GROUPS $FSTYP; do
+		if ! test -d "$SRC_DIR/$d" ; then
+			continue
+		fi
+		ls $SRC_DIR/$d/* | \
+			grep -v "\..*" | \
+			grep "^$SRC_DIR/$d/$VALID_TEST_NAME"| \
+			grep -v "group\|Makefile" >> $tmp.list 2>/dev/null
+	done
+}
+
+# takes the list of tests to run in $tmp.list, and removes the tests passed to
+# the function from that list.
+trim_test_list()
+{
+	test_list="$*"
+
+	rm -f $tmp.grep
+	numsed=0
+	for t in $test_list
+	do
+	    if [ $numsed -gt 100 ]; then
+		grep -v -f $tmp.grep <$tmp.list >$tmp.tmp
+		mv $tmp.tmp $tmp.list
+		numsed=0
+		rm -f $tmp.grep
+	    fi
+	    echo "^$t\$" >>$tmp.grep
+	    numsed=`expr $numsed + 1`
+	done
+	grep -v -f $tmp.grep <$tmp.list >$tmp.tmp
+	mv $tmp.tmp $tmp.list
+}
+
+
+_wallclock()
+{
+    date "+%s"
+}
+
+_timestamp()
+{
+    now=`date "+%T"`
+    echo -n " [$now]"
+}
+
+_prepare_test_list()
+{
+	unset list
+	# Tests specified on the command line
+	if [ -s $tmp.arglist ]; then
+		cat $tmp.arglist > $tmp.list
+	else
+		touch $tmp.list
+	fi
+
+	# Specified groups to include
+	for group in $GROUP_LIST; do
+		list=$(get_group_list $group)
+		if [ -z "$list" ]; then
+			echo "Group \"$group\" is empty or not defined?"
+			exit 1
+		fi
+
+		for t in $list; do
+			grep -s "^$t\$" $tmp.list >/dev/null || \
+							echo "$t" >>$tmp.list
+		done
+	done
+
+	if ! $have_test_arg && [ -z "$GROUP_LIST" ]; then
+		# no test numbers, do everything
+		get_all_tests
+	fi
+
+	# Specified groups to exclude
+	for xgroup in $XGROUP_LIST; do
+		list=$(get_group_list $xgroup)
+		if [ -z "$list" ]; then
+			echo "Group \"$xgroup\" is empty or not defined?"
+			exit 1
+		fi
+
+		trim_test_list $list
+	done
+
+	# sort the list of tests into numeric order
+	list=`sort -n $tmp.list | uniq`
+	rm -f $tmp.list $tmp.tmp $tmp.grep
+
+	if $randomize
+	then
+		list=`echo $list | awk -f randomize.awk`
+	fi
+}
+
+# Process command arguments first.
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-\? | -h | --help) usage ;;
+
+	-nfs)		FSTYP=nfs ;;
+	-cifs)		FSTYP=cifs ;;
+	-overlay)	FSTYP=overlay ;;
+	-tmpfs)		FSTYP=tmpfs ;;
+
+	-g)	group=$2 ; shift ;
+		GROUP_LIST="$GROUP_LIST ${group//,/ }"
+		;;
+
+	-x)	xgroup=$2 ; shift ;
+		XGROUP_LIST="$XGROUP_LIST ${xgroup//,/ }"
+		;;
+
+	-X)	xfile=$2; shift ;
+		for d in $SRC_GROUPS $FSTYP; do
+			[ -f $SRC_DIR/$d/$xfile ] || continue
+			for f in `sed "s/#.*$//" $SRC_DIR/$d/$xfile`; do
+				echo $d/$f >> $tmp.xlist
+			done
+		done
+		;;
+	-E)	xfile=$2; shift ;
+		if [ -f $xfile ]; then
+			sed "s/#.*$//" "$xfile" >> $tmp.xlist
+	        fi
+		;;
+	-s)	RUN_SECTION="$RUN_SECTION $2"; shift ;;
+	-S)	EXCLUDE_SECTION="$EXCLUDE_SECTION $2"; shift ;;
+	-l)	diff="diff" ;;
+	-udiff)	diff="$diff -u" ;;
+
+	-n)	showme=true ;;
+        -r)	randomize=true ;;
+
+	-T)	timestamp=true ;;
+	-d)	DUMP_OUTPUT=true ;;
+
+	--large-fs) export LARGE_SCRATCH_DEV=yes ;;
+	--extra-space=*) export SCRATCH_DEV_EMPTY_SPACE=${r#*=} ;;
+
+	-*)	usage ;;
+	*)	# not an argument, we've got tests now.
+		have_test_arg=true ;;
+	esac
+
+	# if we've found a test specification, the break out of the processing
+	# loop before we shift the arguments so that this is the first argument
+	# that we process in the test arg loop below.
+	if $have_test_arg; then
+		break;
+	fi
+
+	shift
+done
+
+# we need common/config, source it after processing args, overlay needs FSTYP
+# set before sourcing common/config
+if ! . ./common/config; then
+	echo "$iam: failed to source common/config"
+	exit 1
+fi
+
+# Process tests from command line now.
+if $have_test_arg; then
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		-*)	echo "Arguments before tests, please!"
+			status=1
+			exit $status
+			;;
+		*)	test_dir=`dirname $1`
+			test_dir=${test_dir#$SRC_DIR/*}
+			test_name=`basename $1`
+			group_file=$SRC_DIR/$test_dir/group
+
+			if egrep "^$test_name" $group_file >/dev/null ; then
+				# in group file ... OK
+				echo $SRC_DIR/$test_dir/$test_name >>$tmp.arglist
+			else
+				# oops
+				echo "$1 - unknown test, ignored"
+			fi
+			;;
+		esac
+
+		shift
+	done
+fi
+
+# we need common/rc
+if ! . ./common/rc
+then
+    echo "check: failed to source common/rc"
+    exit 1
+fi
+
+if [ `id -u` -ne 0 ]
+then
+    echo "check: QA must be run as root"
+    exit 1
+fi
+
+_wipe_counters()
+{
+	n_try="0"
+	n_bad="0"
+	unset try notrun bad
+}
+
+_wrapup()
+{
+    seq="check"
+    check="$RESULT_BASE/check"
+
+    if $showme
+    then
+	:
+    elif $needwrap
+    then
+	if [ -f $check.time -a -f $tmp.time ]
+	then
+	    cat $check.time $tmp.time \
+	    | $AWK_PROG '
+	{ t[$1] = $2 }
+END	{ if (NR > 0) {
+	    for (i in t) print i " " t[i]
+	  }
+	}' \
+	    | sort -n >$tmp.out
+	    mv $tmp.out $check.time
+	fi
+
+	echo "" >>$check.log
+	date >>$check.log
+
+	echo "SECTION       -- $section" >>$tmp.summary
+	echo "=========================" >>$tmp.summary
+        if [ ! -z "$n_try" -a $n_try != 0 ]
+	then
+	    echo "Ran:$try"
+	    echo "Ran:$try" >>$check.log
+	    echo "Ran:$try" >>$tmp.summary
+	fi
+
+	$interrupt && echo "Interrupted!" >>$check.log
+
+	if [ ! -z "$notrun" ]
+	then
+	    echo "Not run:$notrun"
+	    echo "Not run:$notrun" >>$check.log
+	    echo "Not run:$notrun" >>$tmp.summary
+	fi
+
+        if [ ! -z "$n_bad" -a $n_bad != 0 ]
+	then
+	    echo "Failures:$bad"
+	    echo "Failed $n_bad of $n_try tests"
+	    echo "Failures:$bad" >>$check.log
+	    echo "Failed $n_bad of $n_try tests" >>$check.log
+	    echo "Failures:$bad" >>$tmp.summary
+	    echo "Failed $n_bad of $n_try tests" >>$tmp.summary
+	else
+	    echo "Passed all $n_try tests"
+	    echo "Passed all $n_try tests" >>$check.log
+	    echo "Passed all $n_try tests" >>$tmp.summary
+	fi
+	echo "" >>$tmp.summary
+	needwrap=false
+    fi
+
+    sum_bad=`expr $sum_bad + $n_bad`
+    _wipe_counters
+    rm -f /tmp/*.rawout /tmp/*.out /tmp/*.err /tmp/*.time
+    if ! $OPTIONS_HAVE_SECTIONS; then
+        rm -f $tmp.*
+    fi
+}
+
+_summary()
+{
+	_wrapup
+	if $showme; then
+		:
+	elif $needsum; then
+		count=`wc -L $tmp.summary | cut -f1 -d" "`
+		cat $tmp.summary
+		needsum=false
+	fi
+	rm -f $tmp.*
+}
+
+_check_filesystems()
+{
+	if [ -f ${RESULT_DIR}/require_test ]; then
+		_check_test_fs || err=true
+		rm -f ${RESULT_DIR}/require_test
+	fi
+	if [ -f ${RESULT_DIR}/require_scratch ]; then
+		_check_scratch_fs || err=true
+		rm -f ${RESULT_DIR}/require_scratch
+	fi
+}
+
+_prepare_test_list
+
+if $OPTIONS_HAVE_SECTIONS; then
+	trap "_summary; exit \$status" 0 1 2 3 15
+else
+	trap "_wrapup; exit \$status" 0 1 2 3 15
+fi
+
+for section in $HOST_OPTIONS_SECTIONS; do
+	OLD_FSTYP=$FSTYP
+	OLD_MOUNT_OPTIONS=$MOUNT_OPTIONS
+	get_next_config $section
+
+	# Do we need to run only some sections ?
+	if [ ! -z "$RUN_SECTION" ]; then
+		skip=true
+		for s in $RUN_SECTION; do
+			if [ $section == $s ]; then
+				skip=false
+				break;
+			fi
+		done
+		if $skip; then
+			continue
+		fi
+	fi
+
+	# Did this section get excluded?
+	if [ ! -z "$EXCLUDE_SECTION" ]; then
+		skip=false
+		for s in $EXCLUDE_SECTION; do
+			if [ $section == $s ]; then
+				skip=true
+				break;
+			fi
+		done
+		if $skip; then
+			continue
+		fi
+	fi
+
+	mkdir -p $RESULT_BASE
+	if [ ! -d $RESULT_BASE ]; then
+		echo "failed to create results directory $RESULT_BASE"
+		status=1
+		exit
+	fi
+
+	if $OPTIONS_HAVE_SECTIONS; then
+		echo "SECTION       -- $section"
+	fi
+
+	if $RECREATE_TEST_DEV || [ "$OLD_FSTYP" != "$FSTYP" ]; then
+		echo "RECREATING    -- $FSTYP on $TEST_DEV"
+		_test_unmount 2> /dev/null
+		if ! _test_mkfs >$tmp.err 2>&1
+		then
+			echo "our local _test_mkfs routine ..."
+			cat $tmp.err
+			echo "check: failed to mkfs \$TEST_DEV using specified options"
+			status=1
+			exit
+		fi
+		out=`_mount_or_remount_rw "$MOUNT_OPTIONS" $TEST_DEV $TEST_DIR`
+		if [ $? -ne 1 ]; then
+			echo $out
+			status=1
+			exit
+		fi
+		_prepare_test_list
+	elif [ "$OLD_MOUNT_OPTIONS" != "$MOUNT_OPTIONS" ]; then
+		_test_unmount 2> /dev/null
+		out=`_mount_or_remount_rw "$MOUNT_OPTIONS" $TEST_DEV $TEST_DIR`
+		if [ $? -ne 1 ]; then
+			echo $out
+			status=1
+			exit
+		fi
+	fi
+
+	init_rc
+
+	seq="check"
+	check="$RESULT_BASE/check"
+
+	# don't leave old full output behind on a clean run
+	rm -f $check.full
+
+	[ -f $check.time ] || touch $check.time
+
+	# print out our test configuration
+	echo "FSTYP         -- `_full_fstyp_details`"
+	echo "PLATFORM      -- `_full_platform_details`"
+	if [ ! -z "$SCRATCH_DEV" ]; then
+	  echo "MKFS_OPTIONS  -- `_scratch_mkfs_options`"
+	  echo "MOUNT_OPTIONS -- `_scratch_mount_options`"
+	fi
+	echo
+	needwrap=true
+
+	if [ ! -z "$SCRATCH_DEV" ]; then
+	  _scratch_unmount 2> /dev/null
+	  # call the overridden mkfs - make sure the FS is built
+	  # the same as we'll create it later.
+
+	  if ! _scratch_mkfs >$tmp.err 2>&1
+	  then
+	      echo "our local _scratch_mkfs routine ..."
+	      cat $tmp.err
+	      echo "check: failed to mkfs \$SCRATCH_DEV using specified options"
+	      status=1
+	      exit
+	  fi
+
+	  # call the overridden mount - make sure the FS mounts with
+	  # the same options that we'll mount with later.
+	  if ! _scratch_mount >$tmp.err 2>&1
+	  then
+	      echo "our local mount routine ..."
+	      cat $tmp.err
+	      echo "check: failed to mount \$SCRATCH_DEV using specified options"
+	      status=1
+	      exit
+	  fi
+	fi
+
+	seqres="$check"
+	_check_test_fs
+
+	for seq in $list
+	do
+	    err=false
+	    if [ ! -f $seq ]; then
+	        # Try to get full name in case the user supplied only seq id
+	        # and the test has a name. A bit of hassle to find really
+	        # the test and not its sample output or helping files.
+	        bname=$(basename $seq)
+	        full_seq=$(find $(dirname $seq) -name $bname* -executable |
+	            awk '(NR == 1 || length < length(shortest)) { shortest = $0 }\
+	                END { print shortest }')
+	        if [ -f $full_seq ] \
+	            && [ x$(echo $bname | grep -o "^$VALID_TEST_ID") != x ]; then
+	            seq=$full_seq
+	        fi
+	    fi
+
+	    # the filename for the test and the name output are different.
+	    # we don't include the tests/ directory in the name output.
+	    export seqnum=`echo $seq | sed -e "s;$SRC_DIR/;;"`
+
+	    # Similarly, the result directory needs to replace the tests/
+	    # part of the test location.
+	    group=`dirname $seq`
+	    if $OPTIONS_HAVE_SECTIONS; then
+		export RESULT_DIR=`echo $group | sed -e "s;$SRC_DIR;${RESULT_BASE}/$section;"`
+		seqres="$RESULT_BASE/$section/$seqnum"
+	    else
+		export RESULT_DIR=`echo $group | sed -e "s;$SRC_DIR;$RESULT_BASE;"`
+		seqres="$RESULT_BASE/$seqnum"
+	    fi
+
+	    mkdir -p $RESULT_DIR
+
+	    echo -n "$seqnum"
+
+		if $showme; then
+			echo
+			continue
+		fi
+
+		if [ ! -f $seq ]; then
+			echo " - no such test?"
+		else
+		# really going to try and run this one
+		#
+		rm -f $seqres.out.bad
+
+		# check if we really should run it
+		if [ -s $tmp.xlist ]; then
+			if grep $seqnum $tmp.xlist > /dev/null 2>&1 ; then
+				echo "       [expunged]"
+				continue
+			fi
+		fi
+
+		# slashes now in names, sed barfs on them so use grep
+		lasttime=`grep -w ^$seqnum $check.time | awk '// {print $2}'`
+		if [ "X$lasttime" != X ]; then
+			echo -n " ${lasttime}s ..."
+		else
+			echo -n "	"	# prettier output with timestamps.
+		fi
+		rm -f core $seqres.notrun
+
+		start=`_wallclock`
+		$timestamp && echo -n "	["`date "+%T"`"]"
+		[ ! -x $seq ] && chmod u+x $seq # ensure we can run it
+		$LOGGER_PROG "run xfstest $seqnum"
+		if [ -w /dev/kmsg ]; then
+			export date_time=`date +"%F %T"`
+			echo "run fstests $seqnum at $date_time" > /dev/kmsg
+			# _check_dmesg depends on this log in dmesg
+			touch ${RESULT_DIR}/check_dmesg
+		fi
+		if [ "$DUMP_OUTPUT" = true ]; then
+			./$seq 2>&1 | tee $tmp.rawout
+			# Because $? would get tee's return code
+			sts=${PIPESTATUS[0]}
+		else
+			./$seq >$tmp.rawout 2>&1
+			sts=$?
+		fi
+		$timestamp && _timestamp
+		stop=`_wallclock`
+
+		_fix_malloc <$tmp.rawout >$tmp.out
+		rm -f $tmp.rawout
+
+		if [ -f core ]
+		then
+		    echo -n " [dumped core]"
+		    mv core $RESULT_BASE/$seqnum.core
+		    err=true
+		fi
+
+		if [ -f $seqres.notrun ]
+		then
+		    $timestamp || echo -n " [not run] "
+		    $timestamp && echo " [not run]" && echo -n "	$seqnum -- "
+		    cat $seqres.notrun
+		    notrun="$notrun $seqnum"
+		else
+		    if [ $sts -ne 0 ]
+		    then
+			echo -n " [failed, exit status $sts]"
+			err=true
+		    fi
+		    if [ ! -f $seq.out ]
+		    then
+			echo " - no qualified output"
+			err=true
+		    else
+
+			# coreutils 8.16+ changed quote formats in error messages from
+			# `foo' to 'foo'. Filter old versions to match the new version.
+			sed -i "s/\`/\'/g" $tmp.out
+			if diff $seq.out $tmp.out >/dev/null 2>&1
+			then
+			    if $err
+			    then
+				:
+			    else
+				echo "$seqnum `expr $stop - $start`" >>$tmp.time
+				echo -n " `expr $stop - $start`s"
+			    fi
+			    echo ""
+			else
+			    echo " - output mismatch (see $seqres.out.bad)"
+			    mv $tmp.out $seqres.out.bad
+			    $diff $seq.out $seqres.out.bad | {
+				if test "$DIFF_LENGTH" -le 0; then
+					cat
+				else
+					head -n "$DIFF_LENGTH"
+					echo "..."
+					echo "(Run '$diff $seq.out $seqres.out.bad'" \
+						" to see the entire diff)"
+				fi; } | \
+				sed -e 's/^\(.\)/    \1/'
+			    err=true
+			fi
+		    fi
+		    try="$try $seqnum"
+		    n_try=`expr $n_try + 1`
+		    _check_filesystems
+		    _check_dmesg || err=true
+		fi
+
+	    fi
+
+	    # come here for each test, except when $showme is true
+	    #
+	    if $err
+	    then
+		bad="$bad $seqnum"
+		n_bad=`expr $n_bad + 1`
+		quick=false
+	    fi
+
+	    seq="after_$seqnum"
+	done
+	_wrapup
+	echo
+
+	_test_unmount 2> /dev/null
+	_scratch_unmount 2> /dev/null
+done
+
+interrupt=false
+status=`expr $sum_bad`
+exit

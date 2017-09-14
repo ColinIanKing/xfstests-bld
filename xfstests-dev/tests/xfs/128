@@ -1,0 +1,144 @@
+#! /bin/bash
+# FS QA Test No. 128
+#
+# Ensure that xfs_fsr un-reflinks files while defragmenting
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2015, Oracle and/or its affiliates.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/reflink
+
+# real QA test starts here
+_supported_os Linux
+_supported_fs xfs
+_require_test_lsattr
+_require_scratch_reflink
+_require_cp_reflink
+
+echo "Format and mount"
+_scratch_mkfs > $seqres.full 2>&1
+_scratch_mount >> $seqres.full 2>&1
+
+testdir=$SCRATCH_MNT/test-$seq
+mkdir $testdir
+free_blocks0=$(stat -f $testdir -c '%f')
+
+echo "Create the original file and reflink to file2, file3"
+blks=2000
+margin=160
+blksz=65536
+real_blksz="$(stat -f $testdir -c '%S')"
+blksz_factor=$((blksz / real_blksz))
+_pwrite_byte 0x61 0 $((blks * blksz)) $testdir/file1 >> $seqres.full
+_cp_reflink $testdir/file1 $testdir/file2
+_cp_reflink $testdir/file2 $testdir/file3
+_cp_reflink $testdir/file3 $testdir/file4
+_scratch_cycle_mount
+free_blocks1=$(stat -f $testdir -c '%f')
+
+md5sum $testdir/file1 | _filter_scratch
+md5sum $testdir/file2 | _filter_scratch
+md5sum $testdir/file3 | _filter_scratch
+md5sum $testdir/file4 | _filter_scratch
+
+c01=$(_md5_checksum $testdir/file1)
+c02=$(_md5_checksum $testdir/file2)
+c03=$(_md5_checksum $testdir/file3)
+c04=$(_md5_checksum $testdir/file4)
+
+echo "CoW the reflink copies"
+_pwrite_byte 0x62 $blksz $blksz $testdir/file2 >> $seqres.full
+_pwrite_byte 0x63 $(( blksz * (blks - 1) )) $blksz $testdir/file3 >> $seqres.full
+_scratch_cycle_mount
+free_blocks2=$(stat -f $testdir -c '%f')
+
+md5sum $testdir/file1 | _filter_scratch
+md5sum $testdir/file2 | _filter_scratch
+md5sum $testdir/file3 | _filter_scratch
+md5sum $testdir/file4 | _filter_scratch
+
+c11=$(_md5_checksum $testdir/file1)
+c12=$(_md5_checksum $testdir/file2)
+c13=$(_md5_checksum $testdir/file3)
+c14=$(_md5_checksum $testdir/file4)
+
+echo "Defragment"
+lsattr -l $testdir/ | _filter_scratch | _filter_spaces
+$XFS_FSR_PROG -v -d $testdir/file1 >> $seqres.full
+$XFS_FSR_PROG -v -d $testdir/file2 >> $seqres.full # fsr probably breaks the link
+$XFS_FSR_PROG -v -d $testdir/file3 >> $seqres.full # fsr probably breaks the link
+$XFS_FSR_PROG -v -d $testdir/file4 >> $seqres.full # fsr probably ignores this file
+_scratch_cycle_mount
+free_blocks3=$(stat -f $testdir -c '%f')
+
+md5sum $testdir/file1 | _filter_scratch
+md5sum $testdir/file2 | _filter_scratch
+md5sum $testdir/file3 | _filter_scratch
+md5sum $testdir/file4 | _filter_scratch
+
+c21=$(_md5_checksum $testdir/file1)
+c22=$(_md5_checksum $testdir/file2)
+c23=$(_md5_checksum $testdir/file3)
+c24=$(_md5_checksum $testdir/file4)
+
+echo "Check files"
+test $c01 = $c02 || echo "Files 1-2 do not match"
+test $c01 = $c03 || echo "Files 1-3 do not match"
+test $c01 = $c04 || echo "Files 1-4 do not match"
+test $c02 = $c03 || echo "Files 2-3 do not match"
+test $c02 = $c04 || echo "Files 2-4 do not match"
+test $c03 = $c04 || echo "Files 3-4 do not match"
+
+test $c01 = $c11 || echo "File1 should not be different after CoW"
+test $c02 != $c12 || echo "File2 should be different after CoW"
+test $c03 != $c13 || echo "File3 should be different after CoW"
+test $c04 = $c14 || echo "File4 should not be different after CoW"
+
+test $c11 = $c21 || echo "File1 changed by defrag"
+test $c12 = $c22 || echo "File2 changed by defrag"
+test $c13 = $c23 || echo "File3 changed by defrag"
+test $c14 = $c24 || echo "File4 changed by defrag"
+
+#echo $free_blocks0 $free_blocks1 $free_blocks2 $free_blocks3
+
+_within_tolerance "free blocks after creating some reflink copies" $free_blocks1 $((free_blocks0 - (blks * blksz_factor) )) $margin -v
+_within_tolerance "free blocks after CoW some reflink copies" $free_blocks2 $((free_blocks1 - 2)) $margin -v
+_within_tolerance "free blocks after defragging all reflink copies" $free_blocks3 $((free_blocks2 - (blks * 2 * blksz_factor))) $margin -v
+_within_tolerance "free blocks after all tests" $free_blocks3 $((free_blocks0 - (blks * 3 * blksz_factor))) $margin -v
+
+# success, all done
+status=0
+exit

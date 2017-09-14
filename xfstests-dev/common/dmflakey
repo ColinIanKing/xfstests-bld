@@ -1,0 +1,100 @@
+##/bin/bash
+#
+# Copyright (c) 2013 Fusion IO, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# common functions for setting up and tearing down a dmflakey device
+
+FLAKEY_ALLOW_WRITES=0
+FLAKEY_DROP_WRITES=1
+
+echo $MOUNT_OPTIONS | grep -q dax
+if [ $? -eq 0 ]; then
+	_notrun "Cannot run tests with DAX on dmflakey devices"
+fi
+
+_init_flakey()
+{
+	local BLK_DEV_SIZE=`blockdev --getsz $SCRATCH_DEV`
+	FLAKEY_DEV=/dev/mapper/flakey-test
+	FLAKEY_TABLE="0 $BLK_DEV_SIZE flakey $SCRATCH_DEV 0 180 0"
+	FLAKEY_TABLE_DROP="0 $BLK_DEV_SIZE flakey $SCRATCH_DEV 0 0 180 1 drop_writes"
+	$DMSETUP_PROG create flakey-test --table "$FLAKEY_TABLE" || \
+		_fatal "failed to create flakey device"
+	$DMSETUP_PROG mknodes > /dev/null 2>&1
+}
+
+_mount_flakey()
+{
+	_scratch_options mount
+	mount -t $FSTYP $SCRATCH_OPTIONS $MOUNT_OPTIONS $FLAKEY_DEV $SCRATCH_MNT
+}
+
+_unmount_flakey()
+{
+	$UMOUNT_PROG $SCRATCH_MNT
+}
+
+_cleanup_flakey()
+{
+	# If dmsetup load fails then we need to make sure to do resume here
+	# otherwise the umount will hang
+	$DMSETUP_PROG resume flakey-test > /dev/null 2>&1
+	$UMOUNT_PROG $SCRATCH_MNT > /dev/null 2>&1
+	# wait for device to be fully settled so that 'dmsetup remove' doesn't
+	# fail due to EBUSY
+	$UDEV_SETTLE_PROG >/dev/null 2>&1
+	$DMSETUP_PROG remove flakey-test > /dev/null 2>&1
+	$DMSETUP_PROG mknodes > /dev/null 2>&1
+}
+
+# _load_flakey_table <table> [lockfs]
+#
+# This defaults to --nolockfs, which doesn't freeze_fs() before loading the new
+# table, so it simulates power failure.
+_load_flakey_table()
+{
+
+	table="$FLAKEY_TABLE"
+	[ $1 -eq $FLAKEY_DROP_WRITES ] && table="$FLAKEY_TABLE_DROP"
+
+	suspend_opt="--nolockfs"
+	[ $# -gt 1 ] && [ $2 -eq 1 ] && suspend_opt=""
+
+	$DMSETUP_PROG suspend $suspend_opt flakey-test
+	[ $? -ne 0 ] && _fatal "failed to suspend flakey-test"
+
+	$DMSETUP_PROG load flakey-test --table "$table"
+	[ $? -ne 0 ] && _fatal "failed to load table into flakey-test"
+
+	$DMSETUP_PROG resume flakey-test
+	[ $? -ne 0 ] && _fatal  "failed to resumeflakey-test"
+}
+
+# Silently drop all writes and unmount/remount to simulate a crash/power
+# failure.
+_flakey_drop_and_remount()
+{
+	_load_flakey_table $FLAKEY_DROP_WRITES
+	_unmount_flakey
+
+	if [ "x$1" = "xyes" ]; then
+		_check_scratch_fs $FLAKEY_DEV
+	fi
+
+	_load_flakey_table $FLAKEY_ALLOW_WRITES
+	_mount_flakey
+}

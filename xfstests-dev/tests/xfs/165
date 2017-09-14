@@ -1,0 +1,128 @@
+#! /bin/bash
+# FS QA Test No. 165
+#
+# Test out prealloc, direct writes and buffered read
+# Some experimentation when looking at 
+#   pv#962014 - DMF 3.7 reading incorrect data 
+# Doesn't actually reproduce the problem but it tried to :-)
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+_filter_io()
+{
+    tee -a $seqres.full | _filter_xfs_io
+}
+
+#
+# <    1: [8..79]:         6552..6623        0 (6552..6623)        72
+# >    1: [8..79]:         202544..202615    0 (202544..202615)    72
+#
+_filter_bmap()
+{
+    awk '$3 ~ /hole/ { print $1, $2, $3; next }
+         {print $1, $2}' >> $seqres.full
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs xfs
+_supported_os IRIX Linux
+_require_test
+
+# io tests 
+testfile=$TEST_DIR/file.$seq
+rm -f $testfile
+rm -f $seqres.full
+len=4
+end=`expr 10 \* $len`
+
+# Other test...
+#$XFS_IO_PROG -f -c "resvsp ${off}k ${end}k" $testfile
+
+# write the initial file
+$XFS_IO_PROG -f -c "pwrite 0  ${end}k" $testfile | _filter_io
+
+off=0
+while [ $off -le $end ]
+do
+	offset=${off}k
+	length=${len}k
+
+	$XFS_IO_PROG -c "unresvsp $offset $length" -c "bmap -vp" $testfile | _filter_bmap
+
+	let off=$off+$len # skip over 1
+	let off=$off+$len
+done
+
+off=0
+while [ $off -le $end ]
+do
+	offset=${off}k
+	length=${len}k
+	bufsize=${len}k
+	echo ""
+	echo "*** offset = $offset ***"
+	echo ""
+
+	# prealloc and write
+	$XFS_IO_PROG -d -c "resvsp $offset $length" -c "pwrite -b $bufsize $offset $length" $testfile | _filter_io
+
+	# Other tests...
+	#$XFS_IO_PROG -c "resvsp $offset $length" $testfile
+	#xfs_bmap -v -p $testfile
+	#$XFS_IO_PROG -d -c "pwrite -b $bufsize $offset $length" $testfile
+	#xfs_bmap -v -p $testfile
+
+	$XFS_IO_PROG -r -c "pread -v -b $bufsize $offset $length" $testfile >$tmp.$off &
+
+	# Other tests...
+	#$XFS_IO_PROG -r -c "pread -v -b $bufsize $offset $length" $testfile
+        #sleep 5
+
+	let off=$off+$len # skip over 1
+	let off=$off+$len
+done
+
+wait
+cat $tmp.* | _filter_io
+
+# success, all done
+status=0
+exit

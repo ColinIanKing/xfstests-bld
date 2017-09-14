@@ -1,0 +1,136 @@
+##/bin/bash
+#
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# Functions useful for xfs_repair tests
+#
+
+_zero_position()
+{
+	value=$1
+	struct="$2"
+
+	# set values for off/len variables provided by db
+	eval `xfs_db -r -c "$struct" -c stack $SCRATCH_DEV | perl -ne '
+		if (/byte offset (\d+), length (\d+)/) {
+			print "offset=$1\nlength=$2\n"; exit
+		}'`
+	if [ -z "$offset" -o -z "$length" ]; then
+		echo "cannot calculate offset ($offset) or length ($length)"
+		exit
+	fi
+	length=`expr $length / 512`
+	src/devzero -v $value -b 1 -n $length -o $offset $SCRATCH_DEV \
+		| perl -npe 's/\d\.\d\dKb/X.XXKb/g'
+}
+
+_filter_repair()
+{
+	perl -ne '
+# for sb
+/- agno = / && next;	# remove each AG line (variable number)
+s/(pointer to) (\d+)/\1 INO/;
+s/(sb root inode value) (\d+)( \(NULLFSINO\))?/\1 INO/;
+s/(realtime bitmap inode) (\d+)( \(NULLFSINO\))?/\1 INO/;
+s/(realtime summary inode) (\d+)( \(NULLFSINO\))?/\1 INO/;
+s/(inconsistent with calculated value) (\d+)/\1 INO/;
+s/\.+(found)/\1/g;	# remove "searching" output
+# for agf + agi
+s/(bad length -{0,1}\d+ for ag. 0, should be) (\d+)/\1 LENGTH/;
+s/(bad length # -{0,1}\d+ for ag. 0, should be) (\d+)/\1 LENGTH/;
+s/(bad agbno) (\d+)/\1 AGBNO/g;
+s/(max =) (\d+)/\1 MAX/g;
+# for root inos
+s/(on inode) (\d+)/\1 INO/g;
+s/(imap claims a free inode) (\d+)/\1 INO/;
+s/(imap claims in-use inode) (\d+)/\1 INO/;
+s/(cleared root inode) (\d+)/\1 INO/;
+s/(resetting inode) (\d+)/\1 INO/;
+s/(disconnected dir inode) (\d+)/\1 INO/;
+# for log
+s/internal log/<TYPEOF> log/g;
+s/external log on \S+/<TYPEOF> log/g;
+# realtime subvol - remove this whole line if it appears
+s/        - generate realtime summary info and bitmap...\n//g;
+#
+# new xfs repair output filters
+#
+s/\s+- creating \d+ worker thread\(s\)\n//g;
+s/\s+- reporting progress in intervals of \d+ minutes\n//g;
+s/\s+- \d+:\d\d:\d\d:.*\n//g;
+# 3.1.0 extra accounting output
+/^agf_/ && next; # remove agf counts
+/^agi_/ && next; # remove agi counts
+/^sb_/ && next; # remove sb counts
+/^agi unlinked/ && next; # remove agi unlinked bucket warning
+# crc enabled filesystem output
+/XFS_CORRUPTION_ERROR/ && next;
+/^bad uuid/ && next;
+/^Metadata corruption detected/ && next;
+/^Metadata CRC error detected/ && next;
+/^agfl has bad CRC/ && next;
+/^bad CRC for inode/ && next;
+# finobt enabled filesystem output
+s/(inode chunk) (\d+)\/(\d+)/AGNO\/INO/;
+# sunit/swidth reset messages
+s/^(Note - .*) were copied.*/\1 fields have been reset./;
+s/^(Please) reset (with .*) if necessary/\1 set \2/;
+# And make them generic so we dont depend on geometry
+s/(stripe unit) \(.*\) (and width) \(.*\)/\1 (SU) \2 (SW)/;
+# corrupt sb messages
+s/(superblock) (\d+)/\1 AGNO/;
+s/(AG \#)(\d+)/\1AGNO/;
+s/(reset bad sb for ag) (\d+)/\1 AGNO/;
+	print;'
+}
+
+_filter_dd()
+{
+	fgrep -v records	# lose records in/out lines
+}
+
+# do some controlled corrupting & ensure repair recovers us
+# 
+_check_repair()
+{
+	value=$1
+	structure="$2"
+
+	#ensure the filesystem has been dirtied since last repair
+	_scratch_mount
+	POSIXLY_CORRECT=yes \
+	dd if=/bin/bash of=$SCRATCH_MNT/sh 2>&1 |_filter_dd
+	sync
+	rm -f $SCRATCH_MNT/sh
+	_scratch_unmount
+
+	_zero_position $value "$structure"
+	_scratch_xfs_repair 2>&1 | _filter_repair
+
+	# some basic sanity checks...
+	_check_scratch_fs
+	_scratch_mount                                      #mount
+	POSIXLY_CORRECT=yes \
+	dd if=/bin/bash of=$SCRATCH_MNT/sh 2>&1 |_filter_dd   #open,write
+	POSIXLY_CORRECT=yes \
+	dd if=$SCRATCH_MNT/sh of=/dev/null 2>&1 |_filter_dd #read
+	rm -f $SCRATCH_MNT/sh                               #unlink
+	_scratch_unmount                                    #umount
+}
+
+# make sure this script returns success
+/bin/true

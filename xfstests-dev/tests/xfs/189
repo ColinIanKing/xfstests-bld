@@ -1,0 +1,261 @@
+#! /bin/bash
+# FS QA Test No. 189
+#
+# Test remount behaviour
+# Initial motivation was for pv#985710 and pv#983964
+#
+# mount(8) adds all options from mtab and fstab to the mount command line.  So
+# the filesystem either must not reject any option at all if it can't change it,
+# or compare the value on the command line to the existing state and only reject
+# it if it would change something that can't be changed.
+#
+# Test this behaviour by mounting a filesystem read-only with a non- default
+# option and then try to remount it rw.
+#
+# note that mount(8) doesn't add the options when specifying both the device
+# node and mount point, so test out the various mounting alternatives
+#
+# <---- Bbbzzzzzzztttt ---->
+#
+# Right, but the kernel /proc/mounts output in no way reflects what mount passes
+# into the kernel, so the entire assumption of this test that what mount outputs
+# is the same as what it inputs is completely wrong.
+#
+# Hence the test now checks to see if the expected options are in the mount
+# options in /etc/mtab rather than looking for an exact match. Hence the tests
+# check what we know should change, not what mount thinks has changed. As a
+# result, the test now passes regardless of whether mount or the kernel controls
+# the contents of /etc/mtab....
+#
+# <---- Normal programming is resumed ---->
+#
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+tag="added by qa $seq"
+
+rm -f $seqres.full
+
+_cleanup()
+{
+	cd /
+	_scratch_unmount 2>/dev/null
+	_putback_scratch_fstab
+	rm -f $tmp.*
+}
+
+_scratch_filter()
+{
+	sed -e "s#$SCRATCH_DEV#SCRATCH_DEV#" \
+	    -e "s#$SCRATCH_MNT#SCRATCH_MNT#" \
+	    -e "s#,context.*s0\"##"
+}
+
+#
+# the output from /proc/mounts in no way matches what mount puts into the kernel
+# as options. Work around it as best possible by matching the strings passed in
+# rather than assuming they are the only options that will be set. If they match
+# output them to the output file so that the golden image and the filtering
+# doesn't need to care about what options may or may not be present in /etc/mtab
+#
+_check_mount()
+{
+	rw_or_ro=$1
+	expected_val=$2
+
+	[ -z "$expected_val" ] && expected_val=$1
+
+	_mount | grep $SCRATCH_MNT | _scratch_filter | \
+		tee -a $seqres.full |
+		grep $rw_or_ro | grep $expected_val > /dev/null
+	if [ $? -eq 0 ]; then
+		echo -n "SCRATCH_DEV on SCRATCH_MNT type xfs ($rw_or_ro"
+		if [ ! -z "$2" ]; then
+			echo -n ",$2"
+		fi
+		echo ")"
+	fi
+}
+
+_test_remount_rw()
+{
+	# use filestreams as a hopefully never default option
+	echo
+	echo "try remount ro,filestreams -> rw,filestreams"
+	echo
+	_scratch_mount -o ro,filestreams
+	[ $? -eq 0 ] || echo "ro,filestreams mount failed unexpectedly"
+	_check_mount ro filestreams
+
+	for dev_mnt in $SCRATCH_DEV $SCRATCH_MNT "$SCRATCH_DEV $SCRATCH_MNT"; do
+		echo "mounting given: $dev_mnt" | _scratch_filter
+		_mount -o remount,rw,filestreams $dev_mnt
+		[ $? -eq 0 ] || echo "remount rw failed"
+		_check_mount rw filestreams
+	done
+
+	_scratch_unmount
+
+	# remount ignores attr2, and noattr2 mount option does does not result
+	# in any "attr2" specific option in /proc/mounts, so we can only check
+	# for ro/rw here.
+	echo
+	echo "try remount ro,noattr2 -> rw,attr2"
+	echo
+	_scratch_mount -o ro,noattr2
+	[ $? -eq 0 ] || echo "ro,noattr2 mount failed unexpectedly"
+	_check_mount ro
+
+	for dev_mnt in $SCRATCH_DEV $SCRATCH_MNT "$SCRATCH_DEV $SCRATCH_MNT"; do
+		echo "mounting given: $dev_mnt" | _scratch_filter
+		_mount -o remount,rw,attr2 $dev_mnt
+		[ $? -eq 0 ] || echo "remount rw,attr2 failed"
+		_check_mount rw
+	done
+
+	_scratch_unmount
+}
+
+#
+# make sure we really can write to a filesystem after remount,rw
+#
+_test_remount_write()
+{
+	echo
+	echo "try touching file after remount ro -> rw with options"
+	echo
+	_scratch_mount
+	[ $? -eq 0 ] || echo "mount (1) failed unexpectedly"
+
+	touch $SCRATCH_MNT/foobar
+	[ $? -eq 0 ] || echo "touch (1) failed unexpectedly"
+
+	_scratch_unmount
+
+	_scratch_mount -o ro
+	[ $? -eq 0 ] || echo "mount (2) failed unexpectedly"
+
+	_mount -o remount,rw,filestreams $SCRATCH_MNT
+	[ $? -eq 0 ] || echo "remount failed unexpectedly"
+
+	touch $SCRATCH_MNT/foobar
+	[ $? -eq 0 ] || echo "touch (2) failed unexpectedly"
+
+	_scratch_unmount
+}
+
+#
+# barrier is the only option we can change besides ro<->rw which is partially
+# handled by the VFS and tested elsewhere.  Make sure mount accepts going
+# from barrier (which also is the default) to nobarrier and back.
+#
+_test_remount_barrier()
+{
+	echo
+	echo "Do remount barrier tests"
+	echo
+
+	# mention barrier explicitly even if it's currently the default just to be sure
+	_scratch_mount -o barrier
+	[ $? -eq 0 ] || echo "mount failed unexpectedly!"
+	_check_mount rw
+
+	_scratch_mount -o remount,nobarrier
+	[ $? -eq 0 ] || _fail "remount nobarrier failed"
+	_check_mount rw nobarrier
+
+	_scratch_mount -o remount,barrier
+	[ $? -eq 0 ] || _fail "remount barrier failed"
+	_check_mount rw
+
+	_scratch_unmount
+}
+
+#
+# Example fstab entry
+# /dev/sdb2            /mnt/scratch1        xfs       defaults 0 0
+#
+_add_scratch_fstab()
+{
+	# comment out any existing SCRATCH_DEV
+	$SED_PROG -i "s;$SCRATCH_DEV;#$SCRATCH_DEV;" /etc/fstab
+
+	# add our fstab entry
+	echo "$SCRATCH_DEV $SCRATCH_MNT xfs defaults 0 0 # $tag" >> /etc/fstab
+}
+
+_modify_scratch_fstab()
+{
+	opts=$1
+
+	# modify our fstab entry that we added
+	# modify opts by looking for last word which has non-space chars
+	$SED_PROG -i "s; [^ ]* 0 0 # $tag; $opts 0 0 # $tag;" /etc/fstab
+}
+
+_putback_scratch_fstab()
+{
+	# uncomment out any existing SCRATCH_DEV
+	$SED_PROG -i "s;#$SCRATCH_DEV;$SCRATCH_DEV;" /etc/fstab
+
+	# remove the one we added at the end
+	$SED_PROG -i "/# $tag/d" /etc/fstab
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+_require_noattr2
+
+unset SCRATCH_RTDEV
+unset SCRATCH_LOGDEV
+
+_scratch_mkfs_xfs | _filter_mkfs 2>/dev/null
+
+_add_scratch_fstab
+_test_remount_rw
+_test_remount_write
+
+echo
+echo "add noikeep to fstab for scratch"
+_modify_scratch_fstab noikeep # noikeep is not default for non dmapi
+_test_remount_rw
+
+_putback_scratch_fstab
+_test_remount_barrier
+
+# success, all done
+echo "*** done"
+status=0

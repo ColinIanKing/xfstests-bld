@@ -1,0 +1,125 @@
+#! /bin/bash
+# FS QA Test No. 181
+#
+# Like 121 only creating large EAs
+# As part of the iunlink processing in recovery it will call VN_RELE
+# which will inactivate the inodes and if they have EAs (which they
+# will here) also call xfs_inactive_attrs.
+# We want to test out this xfs_inactive_attrs code being called in recovery.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+_cleanup()
+{
+    rm -f $tmp.*
+    [ -n "$pid" ] && kill $pid
+}
+
+pid=""
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+rm -f $seqres.full
+rm -f $tmp.log
+
+_require_scratch
+
+echo "mkfs"
+_scratch_mkfs_xfs >>$seqres.full 2>&1 \
+    || _fail "mkfs scratch failed"
+
+echo "mount"
+_scratch_mount >>$seqres.full 2>&1 \
+    || _fail "mount failed: $MOUNT_OPTIONS"
+
+# num_files must be greater than 64 (XFS_AGI_UNLINKED_BUCKETS)
+# so that there will be at least one linked list from one of
+# the 64 buckets, so that we can decode a di_next_unlinked field
+num_files=200
+num_eas=1
+ea_val_size=`expr 32 \* 1024`
+
+# sleep for ages and we will kill this pid when we are ready
+delay=100
+
+echo "open and unlink $num_files files with EAs"
+src/multi_open_unlink -f $SCRATCH_MNT/test_file -n $num_files -s $delay -e $num_eas -v $ea_val_size &
+pid=$!
+
+# time to create and unlink all the files
+sleep 10
+
+echo "godown"
+src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+# kill the multi_open_unlink
+kill $pid 2>/dev/null
+wait $pid 2>/dev/null
+pid=""
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after going down..."
+_print_logstate
+
+echo "mount with replay"
+_scratch_mount $mnt >>$seqres.full 2>&1 \
+    || _fail "mount failed: $mnt $MOUNT_OPTIONS"
+
+echo "godown"
+src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after going down..."
+_print_logstate
+
+echo "logprint to check for CLEAR_AGI_BUCKET..."
+if _scratch_xfs_logprint -t | tee -a $seqres.full | grep CLEAR; then
+	echo 'CLEAR_AGI_BUCKET transactions found!!'
+	echo 'Are you running with an old xfs kernel - where the bug still exists?'
+else
+	echo 'No CLEAR_AGI_BUCKET found in transactions - great - test passed :)'
+fi
+
+# clean up dirty log with log recovery on mount
+_scratch_mount >> $seqres.full 2>&1 \
+    || _fail "mount failed"
+
+# success, all done
+status=0
+exit

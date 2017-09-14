@@ -1,0 +1,321 @@
+#! /bin/bash
+# FS QA Test No. 051
+#
+# Test out ACLs.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# FAILure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+    [ -n "$TEST_DIR" ] && rm -rf $TEST_DIR/$seq.dir1
+}
+
+# -----
+# minimal access ACL has ACEs: USER_OBJ, GROUP_OBJ, OTHER_OBJ
+# This is set with chacl(1) and can be changed by chmod(1).
+#
+# Test that this is being set for ACL and for std unix permissions
+# Test that we can get back the same ACL.
+# Test std permissions for rwx.
+# -----
+#
+# Test out default ACLs and that the ACL is being PASSed
+# onto the children of the dir.
+#
+# -----
+# Test out access check for extended ACLs.
+# -> 3 extra ACEs: MASK, GROUP, USER
+# -> the GROUP compares with egid of process _and_ the supplementary
+#    groups (as found in /etc/group)
+#
+# Test that mask works for USER, GROUP, GROUP_OBJ
+# Test that the ACE type priority is working
+#   -> this would be done by simultaneously matching on ACEs
+#   -> interesting if it allows user to specify ACEs in any order
+#
+
+# real QA test starts here
+_supported_fs xfs udf
+_supported_os Linux
+_require_test
+_require_runas
+
+rm -f $seqres.full
+
+_acl_setup_ids
+_require_acls
+
+# get dir
+cd $TEST_DIR
+rm -rf $seq.dir1
+mkdir $seq.dir1
+cd $seq.dir1
+
+echo "QA output created by $seq"
+echo ""
+echo "=== Test minimal ACE ==="
+
+echo "Setup file"
+# Note: as this is a shell script,
+#       will need read and execute permission set
+#       in order to execute it.
+touch file1
+cat <<EOF >file1
+#!/bin/bash
+echo "Test was executed"
+EOF
+chmod u=rwx file1
+chmod g=rw- file1
+chmod o=r-- file1
+chown $acl1.$acl2 file1
+_acl_ls file1
+
+echo ""
+echo "--- Test get and set of ACL ---"
+echo "Note: Old interface gave an empty ACL - now output an ACL"
+chacl -l file1 | _acl_filter_id
+echo "Try using single colon separator"
+echo "Note: Old interface FAILed because of single colon - new one allows it" 
+chacl u::r--,g::rwx,o:rw- file1 2>&1
+echo "Expect to PASS" 
+chacl u::r--,g::rwx,o::rw- file1 2>&1
+chacl -l file1 | _acl_filter_id
+
+echo ""
+echo "--- Test sync of ACL with std permissions ---"
+_acl_ls file1
+chmod u+w file1
+_acl_ls file1
+chacl -l file1 | _acl_filter_id
+
+echo ""
+echo "--- Test owner permissions ---"
+chacl u::r-x,g::---,o::--- file1 2>&1
+chacl -l file1 | _acl_filter_id
+# change to owner
+echo "Expect to PASS" 
+_runas -u $acl1 -g $acl1 ./file1 2>&1
+echo "Expect to FAIL" 
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+
+echo ""
+echo "--- Test group permissions ---"
+chacl u::---,g::r-x,o::--- file1 2>&1
+chacl -l file1 | _acl_filter_id
+echo "Expect to FAIL - acl1 is owner" 
+_runas -u $acl1 -g $acl1 ./file1 2>&1
+echo "Expect to PASS - acl2 matches group" 
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+echo "Expect to PASS - acl2 matches sup group" 
+_runas -u $acl2 -g $acl3 -s $acl2 ./file1 2>&1
+echo "Expect to FAIL - acl3 is not in group" 
+_runas -u $acl3 -g $acl3 ./file1 2>&1
+
+echo ""
+echo "--- Test other permissions ---"
+chacl u::---,g::---,o::r-x file1 2>&1
+chacl -l file1 | _acl_filter_id
+echo "Expect to FAIL - acl1 is owner" 
+_runas -u $acl1 -g $acl1 ./file1 2>&1
+echo "Expect to FAIL - acl2 is in group" 
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+echo "Expect to FAIL - acl2 is in sup. group" 
+_runas -u $acl2 -g $acl3 -s $acl2 ./file1 2>&1
+echo "Expect to PASS - acl3 is not owner or in group" 
+_runas -u $acl3 -g $acl3 ./file1 2>&1
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Test Extended ACLs ==="
+
+echo ""
+echo "--- Test adding a USER ACE ---"
+echo "Expect to FAIL as no MASK provided"
+chacl u::---,g::---,o::---,u:$acl2:r-x file1 2>&1 | _acl_filter_id
+echo "Ensure that ACL has not been changed"
+chacl -l file1 | _acl_filter_id
+echo "Expect to PASS - USER ACE matches user"
+chacl u::---,g::---,o::---,u:$acl2:r-x,m::rwx file1 2>&1
+chacl -l file1 | _acl_filter_id
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+echo "Expect to FAIL - USER ACE does not match user"
+_runas -u $acl3 -g $acl3 ./file1 2>&1
+
+echo ""
+echo "--- Test adding a GROUP ACE ---"
+echo "Expect to FAIL as no MASK provided"
+chacl u::---,g::---,o::---,g:$acl2:r-x file1 2>&1 | _acl_filter_id
+echo "Ensure that ACL has not been changed"
+chacl -l file1 | _acl_filter_id
+chacl u::---,g::---,o::---,g:$acl2:r-x,m::rwx file1 2>&1
+chacl -l file1 | _acl_filter_id
+echo "Expect to PASS - GROUP ACE matches group"
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+echo "Expect to PASS - GROUP ACE matches sup group"
+_runas -u $acl2 -g $acl1 -s $acl2 ./file1 2>&1
+echo "Expect to FAIL - GROUP ACE does not match group"
+_runas -u $acl3 -g $acl3 ./file1 2>&1
+
+#-------------------------------------------------------
+
+echo ""
+echo "--- Test MASK ---"
+
+# group
+chacl u::---,g::---,o::---,g:$acl2:r-x,m::-w- file1 2>&1
+chacl -l file1 | _acl_filter_id
+echo "Expect to FAIL as MASK prohibits execution"
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+
+# user
+chacl u::---,g::---,o::---,u:$acl2:r-x,m::-w- file1 2>&1
+echo "Expect to FAIL as MASK prohibits execution"
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+
+# user
+chacl u::---,g::---,o::---,u:$acl2:r-x,m::r-x file1 2>&1
+echo "Expect to PASS as MASK allows execution"
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+
+#-------------------------------------------------------
+
+echo ""
+echo "--- Test ACE priority ---"
+
+chacl o::rwx,g::rwx,u:$acl1:rwx,u::---,m::rwx file1 2>&1
+echo "Expect to FAIL as should match on owner"
+_runas -u $acl1 -g $acl2 ./file1 2>&1
+
+chacl o::---,g::---,u:$acl2:rwx,u::---,m::rwx file1 2>&1
+echo "Expect to PASS as should match on user"
+_runas -u $acl2 -g $acl2 ./file1 2>&1
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Test can read ACLs without access permissions ==="
+# This was a bug in kernel code where syscred wasn't being used
+# to override the capabilities
+chacl o::---,g::---,u::--- file1 2>&1
+chacl -l file1 | _acl_filter_id
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Test Default ACLs ==="
+# make test clearer by testing with and without umask
+umask 0
+
+mkdir acldir
+chacl -b "u::rwx,g::rwx,o::rwx" "u::r-x,g::r--,o::---" acldir 2>&1
+chacl -l acldir | _acl_filter_id
+cd acldir
+
+touch file2
+_acl_ls file2
+chacl -l file2 | _acl_filter_id
+
+#ensure that umask is not having an effect 
+#so set it and see
+umask 722
+touch file3
+_acl_ls file3
+chacl -l file3 | _acl_filter_id
+
+cd ..
+umask 022
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Removing ACLs ==="
+chacl -l file1 | _acl_filter_id
+chacl -l acldir | _acl_filter_id
+chacl -l acldir/file2 | _acl_filter_id
+echo "Remove ACLs..."
+chacl -R file1
+chacl -B acldir
+chacl -R acldir/file2
+echo "Note: Old interface would mean empty ACLs - now we show mode ACLs" 
+chacl -l file1 | _acl_filter_id
+chacl -l acldir | _acl_filter_id
+chacl -l acldir/file2 | _acl_filter_id
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Recursive change ACL ==="
+rm -fr root
+mkdir root
+pushd root >/dev/null
+# create an arbitrary little tree
+for i in 1 2 3 4 5 6 7 8 9 0
+do
+	mkdir -p a/$i
+	mkdir -p b/c$i/$i
+	touch a/$i/mumble
+done
+popd >/dev/null
+chown -R 12345.54321 root
+echo "Change #1..."
+_runas -u 12345 -g 54321 -- chacl -r u::rwx,g::-w-,o::--x root
+find root -print | xargs chacl -l
+echo "Change #2..."
+_runas -u 12345 -g 54321 -- chacl -r u::---,g::---,o::--- root
+find root -print | xargs chacl -l
+
+#-------------------------------------------------------
+
+echo ""
+echo "=== Test out error messages for ACL text parsing  ==="
+echo "Note: Old interface gave more informative error msgs"
+
+touch file1
+set -x
+chacl u file1
+chacl u: file1
+chacl u:rumpledumpleunknownuser file1
+chacl u:rumpledumpleunknownuser: file1
+chacl g:rumpledumpleunknowngrp file1
+chacl g:rumpledumpleunknowngrp: file1
+chacl o:user1:rwx file1
+chacl m:user1:rwx file1
+chacl a::rwx file1
+set +x
+
+# success, all done
+status=0
+exit

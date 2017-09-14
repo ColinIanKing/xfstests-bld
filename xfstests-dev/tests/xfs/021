@@ -1,0 +1,157 @@
+#! /bin/bash
+# FS QA Test No. 021
+#
+# xfs_db type attr test (pv 797508 linux-xfs & IRIX)
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+_cleanup()
+{
+	echo "*** unmount"
+	_scratch_unmount 2>/dev/null
+	rm -f $tmp.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_attr()
+{
+	${ATTR_PROG} $* 2>$tmp.err >$tmp.out
+	exit=$?
+	sed \
+	    -e "s#$SCRATCH_MNT[^ .:]*#<TESTFILE>#g" \
+	    -e "s#$tmp[^ :]*#<TMPFILE>#g;" \
+		$tmp.out
+	sed \
+	    -e "s#$SCRATCH_MNT[^ .:]*#<TESTFILE>#g" \
+	    -e "s#$tmp[^ :]*#<TMPFILE>#g;" \
+		$tmp.err 1>&2
+	return $exit
+}
+
+_getfattr()
+{
+	${GETFATTR_PROG} $* 2>$tmp.err >$tmp.out
+	exit=$?
+	sed \
+	    -e "s#$SCRATCH_MNT[^ .:]*#<TESTFILE>#g" \
+	    -e "s#$tmp[^ :]*#<TMPFILE>#g;" \
+		$tmp.out
+	sed \
+	    -e "s#$SCRATCH_MNT[^ .:]*#<TESTFILE>#g" \
+	    -e "s#$tmp[^ :]*#<TMPFILE>#g;" \
+		$tmp.err 1>&2
+	return $exit
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+_require_attrs
+
+rm -f $seqres.full
+_scratch_unmount >/dev/null 2>&1
+
+echo "*** mkfs"
+_scratch_mkfs_xfs >/dev/null \
+	|| _fail "mkfs failed"
+
+echo "*** mount FS"
+_scratch_mount >/dev/null \
+	|| _fail "mount failed"
+
+testfile=$SCRATCH_MNT/testfile
+echo "*** make test file 1"
+
+touch $testfile.1
+echo "v1" | _attr -s "a1" $testfile.1 >/dev/null
+echo "v2--" | _attr -s "a2--" $testfile.1 >/dev/null
+_getfattr --absolute-names $testfile.1
+inum_1=`ls -li $testfile.1 | $AWK_PROG '{ print $1 }'`
+
+echo "*** make test file 2"
+
+touch $testfile.2
+echo "value_1" | _attr -s "a1" $testfile.2 >/dev/null
+echo "value_2" | _attr -s "a2-----" $testfile.2 >/dev/null
+( echo start; POSIXLY_CORRECT=yes dd if=/dev/zero bs=65525 count=1; echo end )\
+	| _attr -s "a3" $testfile.2 >/dev/null
+_getfattr --absolute-names $testfile.2
+
+# print name and size from 1st line of output
+_attr -g "a3" $testfile.2 > $tmp.hahahahaplonk
+head -1 $tmp.hahahahaplonk
+# NOTE:
+# Above goo works around some truly bizzaro sh/sed/head interaction
+# for some versions of these tools (fails on Redhat 7+, 6.2 worked)
+
+# print out the rest of the data apart from the header
+# the size is +1 for an extra \n at the end
+echo -n "size of attr value = "
+# wc inserts different amounts of whitespace in front...
+_attr -g "a3" $testfile.2 | tail -3 | wc -c | sed -e "s/^ *//"
+echo ""
+
+inum_2=`ls -li $testfile.2 | $AWK_PROG '{ print $1 }'`
+
+echo "*** unmount FS"
+_scratch_unmount >>$seqres.full 2>&1 \
+	|| _fail "umount failed"
+
+echo "*** dump attributes (1)"
+
+xfs_db -r -c "inode $inum_1" -c "print a.sfattr" $SCRATCH_DEV | \
+	sed -e '/secure = /d' | sed -e '/parent = /d'
+
+echo "*** dump attributes (2)"
+
+# There is a fair bit of filtering here to convert v5 filesystem output
+# into the v4 format that holds the meaningful information for the test.
+xfs_db -r -c "inode $inum_2" -c "a a.bmx[0].startblock" -c print $SCRATCH_DEV \
+	| perl -ne '
+s/,secure//;
+s/,parent//;
+s/info.hdr/info/;
+/hdr.info.crc/ && next;
+/hdr.info.bno/ && next;
+/hdr.info.uuid/ && next;
+/hdr.info.lsn/ && next;
+/hdr.info.owner/ && next;
+s/^(hdr.info.magic =) 0x3bee/\1 0xfbee/;
+s/^(hdr.firstused =) (\d+)/\1 FIRSTUSED/;
+s/^(hdr.freemap\[0-2] = \[base,size]).*/\1 [FREEMAP..]/;
+s/^(entries\[0-2] = \[hashval,nameidx,incomplete,root,local]).*/\1 [ENTRIES..]/;
+	print;'
+
+echo "*** done"
+exit

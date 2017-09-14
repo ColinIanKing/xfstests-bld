@@ -1,0 +1,84 @@
+#! /bin/bash
+# FS QA Test No. 111
+#
+# Infinite xfs_bulkstat bad-inode loop case from Roger Willcocks.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_scratch
+
+rm -f $seqres.full
+
+[ "$XFS_FSR_PROG" = "" ] && _notrun "xfs_fsr not found"
+
+# real QA test starts here
+_scratch_unmount 2>/dev/null
+MKFS_OPTIONS="-bsize=4096"
+MOUNT_OPTIONS="-o noatime"
+_scratch_mkfs_xfs | _filter_mkfs 2>$tmp.mkfs
+_scratch_mount
+
+echo Create some files
+I=0
+while [ $I -lt 1000 ]
+do
+    $XFS_IO_PROG -f -c "pwrite 0 512" $SCRATCH_MNT/${I} > /dev/null
+    let I=$I+1
+done
+
+# Roughly the middle of the created inodes
+INO=`ls -i $SCRATCH_MNT/512 | awk '{print $1}'`
+_scratch_unmount
+
+# Figure out where that middle inode starts
+BYTE=`$XFS_DB_PROG -c "convert inode $INO byte" $SCRATCH_DEV \
+	| awk '{print $2}' | sed s/[\(\)]//g`
+
+echo Blat inode clusters
+src/itrash $SCRATCH_DEV $BYTE
+
+_scratch_mount || _fail "Couldn't mount after itrash"
+
+echo Attempting bulkstat
+#src/bstat -q $SCRATCH_MNT
+$XFS_FSR_PROG $SCRATCH_MNT | _filter_scratch
+
+# Fix up intentional corruption so test can pass
+_scratch_unmount
+$XFS_REPAIR_PROG $SCRATCH_DEV >> $seqres.full 2>&1
+
+status=0
+exit

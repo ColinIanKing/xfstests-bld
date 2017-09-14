@@ -1,0 +1,199 @@
+/* include/config.h.in.  Generated from configure.ac by autoheader.  */
+
+/* Define to 1 if you have the <acl/libacl.h> header file. */
+#undef HAVE_ACL_LIBACL_H
+
+/* Define to 1 if you have the <assert.h> header file. */
+#undef HAVE_ASSERT_H
+
+/* Define to 1 if you have the <attr/attributes.h> header file. */
+#undef HAVE_ATTR_ATTRIBUTES_H
+
+/* Define to 1 if you have the <attr/xattr.h> header file. */
+#undef HAVE_ATTR_XATTR_H
+
+/* Define to 1 if you have the <bstring.h> header file. */
+#undef HAVE_BSTRING_H
+
+/* Define to 1 if you have the <btrfs/ioctl.h> header file. */
+#undef HAVE_BTRFS_IOCTL_H
+
+/* Define to 1 if you have the <cifs/ioctl.h> header file. */
+#undef HAVE_CIFS_IOCTL_H
+
+/* Define to 1 if you have the <dirent.h> header file. */
+#undef HAVE_DIRENT_H
+
+/* Define to 1 if you have the <errno.h> header file. */
+#undef HAVE_ERRNO_H
+
+/* Define to 1 if you have the <err.h> header file. */
+#undef HAVE_ERR_H
+
+/* Define to 1 if you have the <gdbm-ndbm.h> header file. */
+#undef HAVE_GDBM_NDBM_H
+
+/* Define to 1 if you have the <gdbm/ndbm.h> header file. */
+#undef HAVE_GDBM_NDBM_H_
+
+/* Define to 1 if you have the <inttypes.h> header file. */
+#undef HAVE_INTTYPES_H
+
+/* Define to 1 if you have the `acl' library (-lacl). */
+#undef HAVE_LIBACL
+
+/* Define to 1 if you have the <libaio.h> header file. */
+#undef HAVE_LIBAIO_H
+
+/* Define to 1 if you have the `attr' library (-lattr). */
+#undef HAVE_LIBATTR
+
+/* Define to 1 if you have the `gdbm' library (-lgdbm). */
+#undef HAVE_LIBGDBM
+
+/* Define to 1 if you have the `gdbm_compat' library (-lgdbm_compat). */
+#undef HAVE_LIBGDBM_COMPAT
+
+/* Define to 1 if you have the <libgen.h> header file. */
+#undef HAVE_LIBGEN_H
+
+/* Define to 1 if you have the `handle' library (-lhandle). */
+#undef HAVE_LIBHANDLE
+
+/* Define to 1 if you have the `ndbm' library (-lndbm). */
+#undef HAVE_LIBNDBM
+
+/* Define to 1 if you have the `uuid' library (-luuid). */
+#undef HAVE_LIBUUID
+
+/* Define to 1 if you have the <linux/falloc.h> header file. */
+#undef HAVE_LINUX_FALLOC_H
+
+/* Define to 1 if you have the <linux/fiemap.h> header file. */
+#undef HAVE_LINUX_FIEMAP_H
+
+/* Define to 1 if you have the <malloc.h> header file. */
+#undef HAVE_MALLOC_H
+
+/* Define to 1 if you have the <memory.h> header file. */
+#undef HAVE_MEMORY_H
+
+/* Define to 1 if you have the <ndbm.h> header file. */
+#undef HAVE_NDBM_H
+
+/* Define to 1 if you have the <openssl/md5.h> header file. */
+#undef HAVE_OPENSSL_MD5_H
+
+/* Define to 1 if you have the `renameat2' function. */
+#undef HAVE_RENAMEAT2
+
+/* Define to 1 if you have the <stdint.h> header file. */
+#undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdlib.h> header file. */
+#undef HAVE_STDLIB_H
+
+/* Define to 1 if you have the <strings.h> header file. */
+#undef HAVE_STRINGS_H
+
+/* Define to 1 if you have the <string.h> header file. */
+#undef HAVE_STRING_H
+
+/* Define to 1 if you have the <sys/acl.h> header file. */
+#undef HAVE_SYS_ACL_H
+
+/* Define to 1 if you have the <sys/attributes.h> header file. */
+#undef HAVE_SYS_ATTRIBUTES_H
+
+/* Define to 1 if you have the <sys/fcntl.h> header file. */
+#undef HAVE_SYS_FCNTL_H
+
+/* Define to 1 if you have the <sys/file.h> header file. */
+#undef HAVE_SYS_FILE_H
+
+/* Define to 1 if you have the <sys/fs/xfs_fsops.h> header file. */
+#undef HAVE_SYS_FS_XFS_FSOPS_H
+
+/* Define to 1 if you have the <sys/fs/xfs_itable.h> header file. */
+#undef HAVE_SYS_FS_XFS_ITABLE_H
+
+/* Define to 1 if you have the <sys/ioctl.h> header file. */
+#undef HAVE_SYS_IOCTL_H
+
+/* Define to 1 if you have the <sys/param.h> header file. */
+#undef HAVE_SYS_PARAM_H
+
+/* Define to 1 if you have the <sys/prctl.h> header file. */
+#undef HAVE_SYS_PRCTL_H
+
+/* Define to 1 if you have the <sys/statvfs.h> header file. */
+#undef HAVE_SYS_STATVFS_H
+
+/* Define to 1 if you have the <sys/stat.h> header file. */
+#undef HAVE_SYS_STAT_H
+
+/* Define to 1 if you have the <sys/syssgi.h> header file. */
+#undef HAVE_SYS_SYSSGI_H
+
+/* Define to 1 if you have the <sys/time.h> header file. */
+#undef HAVE_SYS_TIME_H
+
+/* Define to 1 if you have the <sys/types.h> header file. */
+#undef HAVE_SYS_TYPES_H
+
+/* Define to 1 if you have the <sys/uuid.h> header file. */
+#undef HAVE_SYS_UUID_H
+
+/* Define to 1 if you have the <sys/wait.h> header file. */
+#undef HAVE_SYS_WAIT_H
+
+/* Define to 1 if you have the <unistd.h> header file. */
+#undef HAVE_UNISTD_H
+
+/* Define to 1 if you have the `uuid_compare' function. */
+#undef HAVE_UUID_COMPARE
+
+/* Define to 1 if you have the <uuid.h> header file. */
+#undef HAVE_UUID_H
+
+/* Define to 1 if you have the <uuid/uuid.h> header file. */
+#undef HAVE_UUID_UUID_H
+
+/* Define to 1 if you have the <xfs/handle.h> header file. */
+#undef HAVE_XFS_HANDLE_H
+
+/* Define to 1 if you have the <xfs/libxfs.h> header file. */
+#undef HAVE_XFS_LIBXFS_H
+
+/* Define to 1 if you have the <xfs/platform_defs.h> header file. */
+#undef HAVE_XFS_PLATFORM_DEFS_H
+
+/* Define to 1 if you have the <xfs/xfs.h> header file. */
+#undef HAVE_XFS_XFS_H
+
+/* Define to 1 if you have the <xfs/xfs_log_format.h> header file. */
+#undef HAVE_XFS_XFS_LOG_FORMAT_H
+
+/* Define to 1 if you have the <xfs/xqm.h> header file. */
+#undef HAVE_XFS_XQM_H
+
+/* Define to the address where bug reports for this package should be sent. */
+#undef PACKAGE_BUGREPORT
+
+/* Define to the full name of this package. */
+#undef PACKAGE_NAME
+
+/* Define to the full name and version of this package. */
+#undef PACKAGE_STRING
+
+/* Define to the one symbol short name of this package. */
+#undef PACKAGE_TARNAME
+
+/* Define to the home page for this package. */
+#undef PACKAGE_URL
+
+/* Define to the version of this package. */
+#undef PACKAGE_VERSION
+
+/* Define to 1 if you have the ANSI C header files. */
+#undef STDC_HEADERS

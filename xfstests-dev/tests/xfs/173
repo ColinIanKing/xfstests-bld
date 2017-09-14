@@ -1,0 +1,67 @@
+#! /bin/bash
+# FSQA Test No. 173
+#
+# Check the filestreams allocator is doing its job.
+# Multi-file data streams should always write into seperate AGs.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+rm -f $seqres.full
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+	cd /
+	rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/filestreams
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_require_scratch
+
+_check_filestreams_support || _notrun "filestreams not available"
+
+# test large number of streams, multiple I/O per file, 120s timeout
+# Because each stream spills over an AG, the stream count needs to
+# be less than or equal to half the AG count so we don't run out of AGs.
+_set_stream_timeout_centisecs 12000
+
+_test_streams 64 16 33 8 2 1 1 fail
+_test_streams 64 16 32 8 2 0 1
+_test_streams 64 16 33 8 2 0 0 fail
+_test_streams 64 16 32 8 2 1 0
+
+status=0
+exit
+

@@ -1,0 +1,192 @@
+#! /bin/bash
+# FS QA Test No. 073
+#
+# Test xfs_copy
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003,2008 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# don't put fs images in /tmp
+imgs=$TEST_DIR/$$
+
+_cleanup()
+{
+	cd /
+	_scratch_unmount 2>/dev/null
+	umount $imgs.loop 2>/dev/null
+	[ -d $imgs.loop ] && rmdir $imgs.loop
+	umount $imgs.source_dir 2>/dev/null
+	[ -d $imgs.source_dir ] && rm -rf $imgs.source_dir
+	rm -f $imgs.* $tmp.* /var/tmp/xfs_copy.log.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_filter_copy()
+{
+	sed -e "s,$1,<DEVIMAGE>,g" -e "s,$2,<FSIMAGE1>,g" \
+	    -e "s,$3,<DEVIMAGE>,g" -e "s,$4,<FSIMAGE2>,g"
+}
+
+_filter_path()
+{
+	sed -e "s,$1,<MNTPATH>,g" | LC_COLLATE=POSIX sort
+}
+
+_populate_scratch()
+{
+	POSIXLY_CORRECT=yes \
+		dd if=/dev/zero of=$SCRATCH_MNT/big+attr count=1000 bs=4096
+	[ "$FAST_POPULATE" = true ] && return
+	echo $SCRATCH_MNT/big+attr | $here/src/fill2attr
+	$here/src/fill2fs --bytes=1048576 --filesize=4096 --stddev=0 --force \
+		--dir=$SCRATCH_MNT/fill --list=- > $tmp.manifest
+}
+
+_verify_copy()
+{
+	target=$1
+	target_dir=$imgs.loop
+	source=$2
+	source_dir=$3
+
+	[ $source = $SCRATCH_DEV ] && _scratch_mount
+
+	echo checking new image
+	_check_xfs_filesystem $target none none
+
+	echo mounting new image on loopback
+	rmdir $target_dir 2>/dev/null
+	mkdir $target_dir
+
+	mount -t xfs -o loop $target $target_dir 2>/dev/null
+	if [ $? -ne 0 ]; then
+		echo retrying mount with nouuid option >>$seqres.full
+		mount -t xfs -o loop -o nouuid $target $target_dir
+		if [ $? -ne 0 ]; then
+			echo mount failed - evil!
+			return
+		fi
+	fi
+
+	echo comparing new image files to old
+	diff -Naur $source_dir $target_dir
+
+	echo comparing new image directories to old
+	find $source_dir | _filter_path $source_dir > $tmp.manifest1
+	find $target_dir | _filter_path $target_dir > $tmp.manifest2
+	[ -s $tmp.manifest1 ] || echo no directory output
+	diff -u $tmp.manifest1 $tmp.manifest2
+
+	echo comparing new image geometry to old
+	xfs_info $source_dir \
+		| _filter_copy $source $source_dir '/dev/loop.' '#' \
+		| tr -s ' ' \
+		> $tmp.geometry1
+	xfs_info $target_dir \
+		| _filter_copy $target $target_dir '/dev/loop.' '#' \
+		| tr -s ' ' \
+		> $tmp.geometry2
+	[ -s $tmp.geometry1 ] || echo no geometry output
+	diff -u $tmp.geometry1 $tmp.geometry2
+
+	echo unmounting and removing new image
+	umount $source_dir
+	umount $target_dir > /dev/null 2>&1
+	rm -f $target
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_test
+_require_attrs
+
+[ "$USE_EXTERNAL" = yes ] && _notrun "Cannot xfs_copy with external devices"
+[ -n "$XFS_COPY_PROG" ] || _notrun "xfs_copy binary not yet installed"
+
+_require_scratch
+_require_loop
+
+rm -f $seqres.full
+
+_scratch_mkfs_xfs -m crc=0 -dsize=41m,agcount=2 >>$seqres.full 2>&1
+_scratch_mount 2>/dev/null || _fail "initial scratch mount failed"
+
+echo
+echo === populating scratch device
+_populate_scratch
+_scratch_unmount 2>/dev/null
+
+echo
+echo === copying scratch device to single target
+$XFS_COPY_PROG $SCRATCH_DEV $imgs.image | _filter_copy '#' $imgs.image '#' '#'
+_verify_copy $imgs.image $SCRATCH_DEV $SCRATCH_MNT
+
+echo
+echo === copying scratch device to single target, duplicate UUID
+$XFS_COPY_PROG -d $SCRATCH_DEV $imgs.image | _filter_copy '#' $imgs.image '#' '#'
+_verify_copy $imgs.image $SCRATCH_DEV $SCRATCH_MNT
+
+echo 
+echo === copying scratch device to single target, large ro device
+mkfs_crc_opts="-m crc=0"
+if [ -n "$XFS_MKFS_HAS_NO_META_SUPPORT" ]; then
+	mkfs_crc_opts=""
+fi
+${MKFS_XFS_PROG} $mkfs_crc_opts -dfile,name=$imgs.source,size=100g \
+	| _filter_mkfs 2>/dev/null
+rmdir $imgs.source_dir 2>/dev/null
+mkdir $imgs.source_dir
+
+mount -t xfs -o loop $imgs.source $imgs.source_dir
+loop2=`mount | grep $imgs.source | grep -o -e 'loop=.*[^),]' | grep -o -e '/.*$'`
+cp -a $here $imgs.source_dir
+mount -t xfs -o remount,ro $imgs.source $imgs.source_dir
+$XFS_COPY_PROG $imgs.source $imgs.image | _filter_copy '#' $imgs.image '#' '#'
+_verify_copy $imgs.image $imgs.source $imgs.source_dir
+
+# HACK WARNING:
+#
+# We're done with the nested loop mount, now we have to clean
+# up the pieces that mount is incapable of doing.
+losetup -d $loop2 > /dev/null 2>&1
+
+echo
+echo === copying scratch device to multiple targets
+$XFS_COPY_PROG -L$imgs.log -b $SCRATCH_DEV $imgs.image1 $imgs.image2 \
+	| _filter_copy '#' $imgs.image1 '#' $imgs.image2
+_verify_copy $imgs.image1 $SCRATCH_DEV $SCRATCH_MNT
+_verify_copy $imgs.image2 $SCRATCH_DEV $SCRATCH_MNT
+
+# success, all done
+status=0
+exit

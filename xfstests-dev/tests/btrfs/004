@@ -1,0 +1,283 @@
+#! /bin/bash
+# FSQA Test No. btrfs/004
+#
+# Run fsstress to create a reasonably strange file system, make a
+# snapshot and run more fsstress. Then select some files from that fs,
+# run filefrag to get the extent mapping and follow the backrefs.
+# We check to end up back at the original file with the correct offset.
+#
+#-----------------------------------------------------------------------
+# Copyright (C) 2011 STRATO.  All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1
+noise_pid=0
+
+_cleanup()
+{
+	rm $tmp.running
+	wait
+	rm -f $tmp.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs btrfs
+_supported_os Linux
+_require_scratch
+_require_no_large_scratch_dev
+_require_btrfs inspect-internal
+_require_command "/usr/sbin/filefrag" filefrag
+
+rm -f $seqres.full
+
+FILEFRAG_FILTER='
+	if (/blocks? of (\d+) bytes/) {
+		$blocksize = $1;
+		next
+	}
+	($ext, $logical, $physical, $length) =
+		(/^\s*(\d+):\s+(\d+)..\s+\d+:\s+(\d+)..\s+\d+:\s+(\d+):/)
+	or next;
+	($flags) = /.*:\s*(\S*)$/;
+	print $physical * $blocksize, "#",
+	      $length * $blocksize, "#",
+	      $logical * $blocksize, "#",
+	      $flags, " "'
+
+# this makes filefrag output script readable by using a perl helper.
+# output is one extent per line, with three numbers separated by '#'
+# the numbers are: physical, length, logical (all in bytes)
+# sample output: "1234#10#5678" -> physical 1234, length 10, logical 5678
+_filter_extents()
+{
+	tee -a $seqres.full | $PERL_PROG -ne "$FILEFRAG_FILTER"
+}
+
+_check_file_extents()
+{
+	cmd="filefrag -v $1"
+	echo "# $cmd" >> $seqres.full
+	out=`$cmd | _filter_extents`
+	if [ -z "$out" ]; then
+		return 1
+	fi
+	echo "after filter: $out" >> $seqres.full
+	echo $out
+	return 0
+}
+
+# use a logical address and walk the backrefs back to the inode.
+# compare to the expected result.
+# returns 0 on success, 1 on error (with output made)
+_btrfs_inspect_addr()
+{
+	mp=$1
+	addr=$2
+	expect_addr=$3
+	expect_inum=$4
+	file=$5
+	cmd="$BTRFS_UTIL_PROG inspect-internal logical-resolve -P $addr $mp"
+	echo "# $cmd" >> $seqres.full
+	out=`$cmd`
+	echo "$out" >> $seqres.full
+	grep_expr="inode $expect_inum offset $expect_addr root"
+	echo "$out" | grep "^$grep_expr 5$" >/dev/null
+	ret=$?
+	if [ $ret -eq 0 ]; then
+		# look for a root number that is not 5
+		echo "$out" | grep "^$grep_expr \([0-46-9][0-9]*\|5[0-9]\+\)$" \
+			>/dev/null
+		ret=$?
+	fi
+	if [ $ret -eq 0 ]; then
+		return 0
+	fi
+	echo "unexpected output from"
+	echo "	$cmd"
+	echo "expected inum: $expect_inum, expected address: $expect_addr,"\
+		"file: $file, got:"
+	echo "$out"
+	return 1
+}
+
+# use an inode number and walk the backrefs back to the file name.
+# compare to the expected result.
+# returns 0 on success, 1 on error (with output made)
+_btrfs_inspect_inum()
+{
+	file=$1
+	inum=$2
+	snap_name=$3
+	mp="$SCRATCH_MNT/$snap_name"
+	cmd="$BTRFS_UTIL_PROG inspect-internal inode-resolve $inum $mp"
+	echo "# $cmd" >> $seqres.full
+	out=`$cmd`
+	echo "$out" >> $seqres.full
+	grep_expr="^$file$"
+	cnt=`echo "$out" | grep "$grep_expr" | wc -l`
+	if [ $cnt -ge "1" ]; then
+		return 0
+	fi
+	echo "unexpected output from"
+	echo "	$cmd"
+	echo "expected path: $file, got:"
+	echo "$out"
+	return 1
+}
+
+_btrfs_inspect_check()
+{
+	file=$1
+	physical=$2
+	length=$3
+	logical=$4
+	snap_name=$5
+	cmd="stat -c %i $file"
+	echo "# $cmd" >> $seqres.full
+	inum=`$cmd`
+	echo "$inum" >> $seqres.full
+	_btrfs_inspect_addr $SCRATCH_MNT $physical $logical $inum $file
+	ret=$?
+	if [ $ret -eq 0 ]; then
+		_btrfs_inspect_inum $file $inum $snap_name
+		ret=$?
+	fi
+	return $ret
+}
+
+workout()
+{
+	fsz=$1
+	nfiles=$2
+	procs=$3
+	snap_name=$4
+	do_bg_noise=$5
+
+	_scratch_unmount >/dev/null 2>&1
+	echo "*** mkfs -dsize=$fsz"    >>$seqres.full
+	echo ""                                     >>$seqres.full
+	_scratch_mkfs_sized $fsz >>$seqres.full 2>&1 \
+		|| _fail "size=$fsz mkfs failed"
+	run_check _scratch_mount
+	# -w ensures that the only ops are ones which cause write I/O
+	run_check $FSSTRESS_PROG -d $SCRATCH_MNT -w -p $procs -n 2000 \
+		$FSSTRESS_AVOID
+
+	_run_btrfs_util_prog subvolume snapshot $SCRATCH_MNT \
+		$SCRATCH_MNT/$snap_name
+
+	run_check _scratch_unmount >/dev/null 2>&1
+	run_check _scratch_mount "-o compress=lzo"
+
+	# make some noise but ensure we're not touching existing data
+	# extents.
+	run_check $FSSTRESS_PROG -d $SCRATCH_MNT -p $procs -n 4000 \
+		-z -f chown=3 -f link=1 -f mkdir=2 -f mknod=2 \
+		-f rename=2 -f setxattr=1 -f symlink=2
+
+	clean_dir="$SCRATCH_MNT/next"
+	mkdir $clean_dir
+	# now make more files to get a higher tree
+	run_check $FSSTRESS_PROG -d $clean_dir -w -p $procs -n 2000 \
+		$FSSTRESS_AVOID
+	run_check _scratch_unmount >/dev/null 2>&1
+	run_check _scratch_mount "-o atime"
+
+	if [ $do_bg_noise -ne 0 ]; then
+		# make background noise while backrefs are being walked
+		while [ -f "$tmp.running" ]; do
+			echo background fsstress >>$seqres.full
+			run_check $FSSTRESS_PROG -d $SCRATCH_MNT/bgnoise -n 999
+			echo background rm >>$seqres.full
+			rm -rf $SCRATCH_MNT/bgnoise/
+		done &
+		noise_pid=`jobs -p %1`
+		echo "background noise by $noise_pid" >>$seqres.full
+	fi
+
+	cnt=0
+	errcnt=0
+	dir="$SCRATCH_MNT/$snap_name/"
+	for file in `find $dir -name f\* -size +0 | sort -R`; do
+		extents=`_check_file_extents $file`
+		ret=$?
+		if [ $ret -ne 0 ]; then
+			continue;
+		fi
+		for i in $extents; do
+			physical=`echo $i | cut -d '#' -f 1`
+			length=`echo $i | cut -d '#' -f 2`
+			logical=`echo $i | cut -d '#' -f 3`
+			flags=`echo $i | cut -d '#' -f 4`
+			# Skip inline extents, otherwise btrfs inspect-internal
+			# logical-resolve will fail (with errno ENOENT), as it
+			# can't find an extent with a start address of 0 in the
+			# extent tree.
+			if [ $physical -eq 0 ]; then
+				echo "$flags" | grep -E '(^|,)inline(,|$)' \
+					> /dev/null
+				ret=$?
+				if [ $ret -ne 0 ]; then
+					echo "Unexpected physical address 0 for non-inline extent, file $file, flags $flags"
+				fi
+			else
+				_btrfs_inspect_check $file $physical $length \
+					$logical $snap_name
+				ret=$?
+			fi
+			if [ $ret -ne 0 ]; then
+				errcnt=`expr $errcnt + 1`
+			fi
+		done
+		cnt=`expr $cnt + 1`
+		if [ $cnt -ge $nfiles ]; then
+			break
+		fi
+	done
+
+	if [ $errcnt -gt 0 ]; then
+		_fail "test failed: $errcnt error(s)"
+	fi
+}
+
+echo "*** test backref walking"
+
+snap_name="snap1"
+filesize=`expr 2000 \* 1024 \* 1024`
+nfiles=4
+numprocs=1
+do_bg_noise=1
+
+touch $tmp.running
+
+workout $filesize $nfiles $numprocs $snap_name $do_bg_noise
+
+echo "*** done"
+status=0
+exit

@@ -1,0 +1,139 @@
+#! /bin/bash
+# FS QA Test No. 031
+#
+# Testing cross-subvolume sparse copy on btrfs
+#    - Create two subvolumes, mount one of them
+#    - Create a file on each (sub/root)volume,
+#      reflink them on the other volumes
+#    - Change one original and two reflinked files
+#    - Move reflinked files between subvolumes
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2014, Oracle and/or its affiliates.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/reflink
+
+# real QA test starts here
+_supported_fs btrfs
+_supported_os Linux
+
+_require_test
+_require_scratch
+_require_cp_reflink
+
+_checksum_files()
+{
+	for f in file1 file2 file3; do
+		echo "$f:"
+		for d in $testdir1 $cross_mount_test_dir $subvol2; do
+			_md5_checksum $d/$f
+		done
+	done
+}
+
+testdir1=$SCRATCH_MNT/test-$seq-1
+testdir2=$SCRATCH_MNT/test-$seq-2
+subvol1=$SCRATCH_MNT/subvol-$seq-1
+subvol2=$SCRATCH_MNT/subvol-$seq-2
+cross_mount_test_dir=$TEST_DIR/test-$seq
+
+rm -f $seqres.full
+
+_scratch_mkfs > /dev/null 2>&1
+_scratch_mount
+
+mkdir $testdir1
+mkdir $testdir2
+$BTRFS_UTIL_PROG subvolume create $subvol1 >> $seqres.full
+$BTRFS_UTIL_PROG subvolume create $subvol2 >> $seqres.full
+rm -rf $cross_mount_test_dir
+mkdir $cross_mount_test_dir
+
+_mount -t btrfs -o subvol=subvol-$seq-1 $SCRATCH_DEV $cross_mount_test_dir
+
+echo "Create initial files"
+# #testdir1/file1 is very small and will be inlined
+$XFS_IO_PROG -f -c 'pwrite -S 0x61 0 10' $testdir1/file1 \
+    >> $seqres.full
+$XFS_IO_PROG -f -c 'pwrite -S 0x62 0 13000' $cross_mount_test_dir/file2 \
+    >> $seqres.full
+$XFS_IO_PROG -f -c 'pwrite -S 0x63 0 17000' $subvol2/file3 \
+    >> $seqres.full
+
+echo "Create reflinks to the initial files on other subvolumes"
+cp --reflink=always $testdir1/file1 $subvol1
+cp --reflink=always $testdir1/file1 $subvol2
+cp --reflink=always $subvol1/file2 $testdir1/
+cp --reflink=always $subvol1/file2 $subvol2
+cp --reflink=always $subvol2/file3 $testdir1/
+cp --reflink=always $subvol2/file3 $subvol1
+
+echo "Verify the reflinks"
+_verify_reflink $cross_mount_test_dir/file2 $testdir1/file2
+_verify_reflink $cross_mount_test_dir/file2 $subvol2/file2
+_verify_reflink $subvol2/file3 $testdir1/file3
+_verify_reflink $subvol2/file3 $cross_mount_test_dir/file3
+echo "Verify the file contents:"
+_checksum_files
+
+echo -e "---\nOverwrite some files with new content"
+$XFS_IO_PROG -c 'pwrite -S 0x64 0 20' $testdir1/file1 >> $seqres.full
+$XFS_IO_PROG -c 'pwrite -S 0x66 0 21000' $subvol2/file2 >> $seqres.full
+$XFS_IO_PROG -c 'pwrite -S 0x65 5000 5000' $cross_mount_test_dir/file3 \
+    >> $seqres.full
+
+echo -n "Verify that non-overwritten reflinks "
+echo "still have the same data blocks"
+_verify_reflink $testdir1/file2 $cross_mount_test_dir/file2
+_verify_reflink $testdir1/file3 $subvol2/file3
+echo "Verify the file contents:"
+_checksum_files
+
+echo -e "---\nShuffle files between directories"
+mv $testdir1/file* $testdir2
+mv $cross_mount_test_dir/file* $testdir1/
+mv $subvol2/file* $cross_mount_test_dir/
+mv $testdir2/file* $subvol2/
+
+# No _verify_reflink here as data is copied when moving files
+# between subvols
+echo "Verify the file contents:"
+_checksum_files
+
+$UMOUNT_PROG $cross_mount_test_dir
+
+# success, all done
+status=0
+exit

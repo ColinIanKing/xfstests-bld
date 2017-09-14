@@ -1,0 +1,117 @@
+#! /bin/bash
+# FS QA Test No. 318
+#
+# Check get/set ACLs to/from disk with a user namespace. A new file
+# will be created and ACLs set on it from both inside a userns and
+# from init_user_ns. We check that the ACL is is correct from both
+# inside the userns and also from init_user_ns. We will then unmount
+# and remount the file system and check the ACL from both inside the
+# userns and from init_user_ns to show that the correct uid/gid in
+# the ACL was flushed and brought back from disk.
+#
+#-----------------------------------------------------------------------
+# Copyright (C) 2013 Oracle, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+    cd /
+    _scratch_unmount >/dev/null 2>&1
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+nsexec=$here/src/nsexec
+file=$SCRATCH_MNT/file1
+
+# real QA test starts here
+_supported_fs generic
+# only Linux supports user namespace
+_supported_os Linux
+
+rm -f $seqres.full
+
+_require_scratch
+_acl_setup_ids
+_require_acls
+_require_ugid_map
+_require_userns
+ns_acl1=0
+ns_acl2=`expr $acl2 - $acl1`
+ns_acl3=`expr $acl3 - $acl1`
+
+_getfacl_filter_nsid()
+{
+    sed \
+       -e "s/user:$ns_acl1/user:nsid1/" \
+       -e "s/user:$ns_acl2/user:nsid2/" \
+       -e "s/user:$ns_acl3/user:nsid3/" \
+       -e "s/group:$ns_acl1/group:nsid1/" \
+       -e "s/group:$ns_acl2/group:nsid2/" \
+       -e "s/group:$ns_acl3/group:nsid3/" \
+       -e "s/: $ns_acl1/: nsid1/" \
+       -e "s/: $ns_acl2/: nsid2/" \
+       -e "s/: $ns_acl3/: nsid3/"
+}
+
+_print_getfacls()
+{
+    echo "From init_user_ns"
+    getfacl --absolute-names -n $file 2>/dev/null | _filter_scratch | _getfacl_filter_id
+
+    echo "From user_ns"
+    $nsexec -U -M "0 $acl1 1000" -G "0 $acl1 1000" getfacl --absolute-names -n $file 2>/dev/null | _filter_scratch | _getfacl_filter_nsid
+}
+
+_scratch_unmount >/dev/null 2>&1
+echo "*** MKFS ***" >>$seqres.full
+echo ""             >>$seqres.full
+_scratch_mkfs       >>$seqres.full 2>&1 || _fail "mkfs failed"
+_scratch_mount      >>$seqres.full 2>&1 || _fail "mount failed"
+
+touch $file
+chown $acl1.$acl1 $file
+
+# set acls from init_user_ns, to be checked from inside the userns
+setfacl -n -m u:$acl2:rw,g:$acl2:r $file
+# set acls from inside userns, to be checked from init_user_ns
+$nsexec -s -U -M "0 $acl1 1000" -G "0 $acl1 1000" setfacl -n -m u:root:rx,g:$ns_acl2:x $file
+
+_print_getfacls
+
+echo "*** Remounting ***"
+echo ""
+sync
+_scratch_cycle_mount      >>$seqres.full 2>&1 || _fail "remount failed"
+
+_print_getfacls
+
+_scratch_unmount >/dev/null 2>&1
+status=0
+exit

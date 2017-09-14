@@ -1,0 +1,103 @@
+#! /bin/bash
+# FS QA Test No. 029
+#
+# Check if creating a sparse copy ("reflink") of a file on btrfs
+# expectedly fails when it's done between different filesystems or
+# different mount points of the same filesystem.
+#
+# For both situations, these actions are executed:
+#    - Copy a file with the reflink=auto option.
+#      A normal copy should be created.
+#    - Copy a file with the reflink=always option. Should result in
+#      error.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2014, Oracle and/or its affiliates.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/reflink
+
+# real QA test starts here
+_supported_fs btrfs
+_supported_os Linux
+
+_require_test
+_require_scratch
+_require_cp_reflink
+
+reflink_test_dir=$TEST_DIR/test-$seq
+rm -rf $reflink_test_dir
+mkdir $reflink_test_dir
+
+rm -f $seqres.full
+
+_scratch_mkfs > /dev/null 2>&1
+_scratch_mount
+$XFS_IO_PROG -f -c 'pwrite -S 0x61 0 9000' $SCRATCH_MNT/original >> $seqres.full
+
+_filter_testdirs()
+{
+    _filter_test_dir | _filter_scratch
+}
+
+_create_reflinks()
+{
+    # auto reflink, should fall back to non-reflink
+    rm -rf $2
+    echo "reflink=auto:"
+    cp --reflink=auto $1 $2
+    md5sum $1 | _filter_testdirs
+    md5sum $2 | _filter_testdirs
+
+    # always reflink, should fail outright
+    rm -rf $2
+    echo "reflink=always:"
+    cp --reflink=always $1 $2 >> $seqres.full 2>&1 || echo "cp reflink failed"
+
+    # The failed target actually gets created by cp:
+    ls $2 | _filter_testdirs
+}
+
+echo "test reflinks across different devices"
+_create_reflinks $SCRATCH_MNT/original $reflink_test_dir/copy
+
+echo "test reflinks across different mountpoints of same device"
+rm -rf $reflink_test_dir/*
+_mount $SCRATCH_DEV $reflink_test_dir
+_create_reflinks $SCRATCH_MNT/original $reflink_test_dir/copy
+$UMOUNT_PROG $reflink_test_dir
+
+# success, all done
+status=0
+exit

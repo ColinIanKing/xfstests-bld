@@ -1,0 +1,92 @@
+# Filters for btrfs command output
+
+. ./common/filter
+
+# Some, but not all, commands emit "Btrfs <version>"
+_filter_btrfs_version()
+{
+	sed -e "s/^[Bb]trfs.*//g"
+}
+
+_filter_devid()
+{
+	sed -e "s/\(devid\)\s\+[0-9]\+/\1 <DEVID>/g"
+}
+
+# If passed a number as first arg, filter that number of devices
+# If passed a UUID as second arg, filter that exact UUID
+_filter_btrfs_filesystem_show()
+{
+	if [ ! -z $1 ]; then
+		NUMDEVS=$1
+		NUM_SUBST="<EXACTNUM>"
+	else
+		NUMDEVS="[0-9]\+"
+		NUM_SUBST="<NUM>"
+	fi
+
+	UUID=""
+	if [ ! -z $2 ]; then
+		UUID=$2
+	fi
+
+	# the uniq collapses all device lines into 1
+	_filter_uuid $UUID | _filter_scratch | _filter_scratch_pool | \
+	_filter_size | _filter_btrfs_version | _filter_devid | \
+	_filter_zero_size | \
+	sed -e "s/\(Total devices\) $NUMDEVS/\1 $NUM_SUBST/g" | \
+	uniq
+}
+
+# This eliminates all numbers, and shows only unique lines,
+# to accomodate a varying nr. of devices.
+# If given an argument, make sure we saw that many devices
+# in total.
+_filter_btrfs_device_stats()
+{
+	if [ ! -z $1 ]; then
+		NUMDEVS=$1
+		UNIQ_OPT="-c"
+	else
+		NUMDEVS="thiswillnotmatch"
+		UNIQ_OPT=""
+	fi
+
+	_filter_scratch | _filter_scratch_pool | \
+	sed -e "s/[0-9]\+$/<NUM>/g" | sort | uniq $UNIQ_OPT | \
+	sed -e "s/ *$NUMDEVS /<NUMDEVS> /g"
+}
+
+_filter_transaction_commit() {
+	sed -e "/Transaction commit: none (default)/d" | \
+	sed -e "s/Delete subvolume (.*commit):/Delete subvolume/g"
+}
+
+_filter_btrfs_subvol_delete()
+{
+	_filter_scratch | _filter_transaction_commit
+}
+
+_filter_btrfs_compress_property()
+{
+	sed -e "s/compression=\(lzo\|zlib\)/COMPRESSION=XXX/g"
+}
+
+# filter error messages from btrfs prop, optionally verify against $1
+# recognized message(s):
+#  "object is not compatible with property: label"
+#  "invalid value for property:{, value}"
+#  "failed to {get,set} compression for $PATH[.:]: Invalid argument"
+_filter_btrfs_prop_error()
+{
+	if ! [ -z "$1" ]; then
+		sed -e "s#\(compatible with property\): $1#\1#" \
+		    -e "s#^\(.*failed to [sg]et compression for $1\)[:.] \(.*\)#\1: \2#"
+	else
+		sed -e "s#^\(.*compatible with property\).*#\1#" \
+		    -e "s#^\(.*invalid value for property\)[:.].*#\1#"
+	fi
+}
+
+# make sure this script returns success
+/bin/true

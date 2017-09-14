@@ -1,0 +1,76 @@
+#! /bin/bash
+# FSQA Test No. 131
+#
+# lock test created from CXFSQA test lockfile_simple
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    kill $locktest_pid2 > /dev/null 2>&1
+    kill $locktest_pid1 > /dev/null 2>&1
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+_require_test
+_require_test_fcntl_advisory_locks
+
+TESTFILE=$TEST_DIR/lock_file
+
+# Start the server
+src/locktest $TESTFILE 2>&1 > $TEST_DIR/server.out &
+locktest_pid1=$!
+
+sleep 1
+
+PORT=$(cat $TEST_DIR/server.out | grep "^server port: " | awk '{print $3}')
+if [ -z $PORT ]; then
+	echo "Could not get server port"
+	exit 1
+fi
+
+# Start the client
+src/locktest -p $PORT -h localhost $TESTFILE 2>&1 > $TEST_DIR/client.out
+locktest_pid2=$!
+result=$?
+if [ $result -eq 0 ]; then
+	echo success!
+	status=0
+else
+	echo "Client reported failure ($result)"
+	cat $TEST_DIR/*.out
+fi
+
+exit

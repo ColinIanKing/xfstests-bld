@@ -1,0 +1,161 @@
+#! /bin/bash
+# FSQA Test No. 095
+#
+# Regression test for adding and dropping an equal number of references for
+# file extents. Verify that if we drop N references for a file extent and we
+# add too N new references for that same file extent in the same transaction,
+# running the delayed references (always happens at transaction commit time)
+# does not fail.
+#
+# The regression was introduced in the 4.2-rc1 Linux kernel.
+#
+#-----------------------------------------------------------------------
+#
+# Copyright (C) 2015 SUSE Linux Products GmbH. All Rights Reserved.
+# Author: Filipe Manana <fdmanana@suse.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+	_cleanup_flakey
+	rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/dmflakey
+
+# real QA test starts here
+_supported_fs btrfs
+_supported_os Linux
+_require_scratch
+_require_dm_target flakey
+_require_cloner
+_require_metadata_journaling $SCRATCH_DEV
+_require_xfs_io_command "falloc"
+
+rm -f $seqres.full
+
+_scratch_mkfs >>$seqres.full 2>&1
+_init_flakey
+_mount_flakey
+
+BLOCK_SIZE=$(get_block_size $SCRATCH_MNT)
+
+# Create prealloc extent covering file block range [40, 155[
+$XFS_IO_PROG -f -c "falloc $((40 * $BLOCK_SIZE)) $((115 * $BLOCK_SIZE))" \
+	     $SCRATCH_MNT/foo
+
+# Now write to the last 20 blocks of the prealloc extent plus 10 blocks to the
+# unallocated space that immediately follows it. This creates a new extent of 10
+# blocks that spans the block range [155, 165[.
+$XFS_IO_PROG -c "pwrite -S 0xaa $((135 * $BLOCK_SIZE)) $((30 * $BLOCK_SIZE))" \
+	     $SCRATCH_MNT/foo | _filter_xfs_io_blocks_modified
+
+# At this point, there are now 2 back references to the prealloc extent in our
+# extent tree. Both are for our file offset mapped by the 40th block of the file
+# and one relates to a file extent item with a data offset of 0 and a length of
+# 95 blocks, while the other relates to a file extent item with a data offset of
+# 95 blocks and a length of 20 blocks.
+
+# Make sure everything done so far is durably persisted (all back references are
+# in the extent tree, etc).
+sync
+
+# Now clone all extents of our file that cover the file range spanned by 40th
+# block up to its eof (165th block at this point) into itself at 512th
+# block. This leaves a hole in the file covering the block range [165, 512[. The
+# prealloc extent will now be referenced by the file twice, once for offset
+# mapped by the 40th block and once for offset mapped by 512th block. The 10
+# blocks extent that follows the prealloc extent will also be referenced twice
+# by our file, once for offset mapped by the 155th block and once for offset
+# (512 block + 115 blocks)
+$CLONER_PROG -s $((40 * $BLOCK_SIZE)) -d $((512 * $BLOCK_SIZE)) -l 0 \
+	     $SCRATCH_MNT/foo $SCRATCH_MNT/foo
+
+# Now create one new extent in our file with a size of 25 blocks. It will span
+# the block range [768, 768 + 25[. It also will cause creation of a hole
+# spanning the block range [512 + 115, 768[. Our new file size is the file
+# offset mapped by (768 + 25)th block.
+$XFS_IO_PROG -c "pwrite -S 0xbb $((768 * $BLOCK_SIZE)) $((25 * $BLOCK_SIZE))" \
+	     $SCRATCH_MNT/foo | _filter_xfs_io_blocks_modified
+
+# At this point, there are now (in memory) 4 back references to the prealloc
+# extent.
+#
+# Two of them are for file offset mapped by the 40th block, related to file
+# extent items matching the file offsets mapped by 40th and 135th block
+# respectively, with data offsets of 0 and 95 blocks respectively, and with
+# lengths of 95 and 20 blocks respectively.
+#
+# The other two references are for file offset mapped by 512th block, related to
+# file extent items matching the file offsets mapped by 512th and (512 + 95)th
+# block respectively, with data offsets mapped by 0th and 95th block
+# respectively, and with lengths of 95 and 20 blocks respectively.
+#
+# The 10 block extent has 2 back references, one for file offset mapped by 155th
+# block and the other for file offset mapped by (512 + 115)th block.
+#
+# The 25 blocks extent has a single back reference and it relates to file offset
+# mapped by 768th block.
+
+
+# Now clone our 25 block extent into offset mapped by 150th block. That offset
+# covers the last 5 blocks of the prealloc extent, the whole 10 block extent and
+# 10 blocks of the hole starting at offset mapped by 165th block.
+$CLONER_PROG -s $((768 * $BLOCK_SIZE)) -d $((150 * $BLOCK_SIZE)) -l $((25 * $BLOCK_SIZE)) \
+	$SCRATCH_MNT/foo $SCRATCH_MNT/foo
+
+# At this point there's only one reference to the 10 block extent, at file
+# offset mapped by (512 + 115) block, we have 4 references for the prealloc
+# extent (2 for file offset mapped by 40th block and 2 for file offset mapped by
+# 512th block) and 2 references for the 25 block extent (1 for file offset
+# mapped by 768th block and a new one for file offset mapped by 150th block).
+
+# Now fsync our file to make all its new data and metadata updates are durably
+# persisted and present if a power failure/crash happens after a successful
+# fsync and before the next transaction commit.
+$XFS_IO_PROG -c "fsync" $SCRATCH_MNT/foo
+
+echo "File contents before power failure:"
+od -t x1 $SCRATCH_MNT/foo | _filter_od
+
+# During log replay, the btrfs delayed references implementation used to run the
+# deletion of back references before the addition of new back references, which
+# made the addition fail as it didn't find the key in the extent tree that it
+# was looking for. The failure triggered by this test was related to the 10
+# block extent, which got 1 reference dropped and 1 reference added during the
+# fsync log replay - when running the delayed references at transaction commit
+# time, btrfs was applying the deletion before the insertion, resulting in a
+# failure of the insertion that ended up turning the fs into read-only mode.
+_flakey_drop_and_remount
+
+echo "File contents after log replay:"
+od -t x1 $SCRATCH_MNT/foo | _filter_od
+
+_unmount_flakey
+
+status=0
+exit

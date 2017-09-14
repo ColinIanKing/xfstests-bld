@@ -1,0 +1,110 @@
+#! /bin/bash
+# FS QA Test No. 206
+#
+# Test trim of last small AG for large filesystem resizes
+#
+# As reported at
+# http://article.gmane.org/gmane.comp.file-systems.xfs.general/29187
+# this trimming may cause an overflow in the new size calculation.
+# Patch and testcase at
+# http://article.gmane.org/gmane.comp.file-systems.xfs.general/29193
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2009 Eric Sandeen.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    umount $tmpdir
+    rmdir $tmpdir
+    rm -f $tmp
+    rm -f $tmpfile
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs xfs
+_supported_os IRIX Linux
+_require_test
+_require_loop
+
+bitsperlong=`src/feature -w`
+if [ "$bitsperlong" -ne 64 ]; then
+	_notrun "This test is only valid on 64 bit machines"
+fi
+
+rm -f $seqres.full
+
+tmpfile=$TEST_DIR/fsfile.$$
+tmpdir=$TEST_DIR/tmpdir.$$
+
+mkdir -p $tmpdir || _fail "!!! failed to create temp mount dir"
+
+# Create a file w/ the offset we wish to resize to
+echo "=== truncate file ==="
+dd if=/dev/zero of=$tmpfile bs=1 seek=19998630180864 count=1 >/dev/null 2>&1 \
+	|| _fail "!!! failed to truncate loopback file to correct size"
+
+mkfs_filter()
+{
+	sed -e 's/meta-data=[^ ]*/meta-data=FILE/' \
+	    -e 's/ *isize=[0-9]* / isize=N /' \
+	    -e "s/\(^log.*blocks=\)\([0-9]*,\)/\1XXXXX,/" \
+	    -e "s/, projid32bit=[0-9]//" \
+	    -e "s/ ftype=[0-9]//" \
+	    -e "/.*reflink=/d" \
+	    -e "s/\(sectsz\)\(=[0-9]* *\)/\1=512   /" \
+	    -e "s/\(sunit=\)\([0-9]* blks,\)/\10 blks,/" \
+	    -e "s/, lazy-count=[0-9]//" \
+	    -e "/.*crc=/d"
+}
+
+# mkfs slightly smaller than that, small log for speed.
+echo "=== mkfs.xfs ==="
+mkfs.xfs -f -bsize=4096 -l size=32m -dagsize=76288719b,size=3905982455b \
+	 $tmpfile  | mkfs_filter
+
+mount -o loop $tmpfile $tmpdir || _fail "!!! failed to loopback mount"
+
+# see what happens when we growfs it
+echo "=== xfs_growfs ==="
+xfs_growfs $tmpdir  | mkfs_filter
+
+# and double-check the new geometry
+echo "=== xfs_info ==="
+xfs_info $tmpdir | mkfs_filter
+
+# _cleanup cleans up for us
+
+# success, all done
+status=0
+exit
+

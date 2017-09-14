@@ -1,0 +1,253 @@
+##/bin/bash
+#
+# Copyright (c) 2000-2001,2005 Silicon Graphics, Inc.
+# All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# Functions useful for quota tests
+#
+
+#
+# checks that the generic quota support in the kernel is enabled
+# and that we have valid quota user tools installed.
+#
+_require_quota()
+{
+    [ -n "$QUOTA_PROG" ] || _notrun "Quota user tools not installed"
+
+    case $FSTYP in
+    ext2|ext3|ext4|ext4dev|reiserfs)
+	if [ ! -d /proc/sys/fs/quota ]; then
+	    _notrun "Installed kernel does not support quotas"
+	fi
+	;;
+    gfs2)
+	;;
+    xfs)
+	if [ ! -f /proc/fs/xfs/xqmstat ]; then
+	    _notrun "Installed kernel does not support XFS quotas"
+        fi
+	if [ "$USE_EXTERNAL" = yes -a ! -z "$TEST_RTDEV" ]; then
+	    _notrun "Quotas not supported on realtime test device"
+	fi
+	if [ "$USE_EXTERNAL" = yes -a ! -z "$SCRATCH_RTDEV" ]; then
+	    _notrun "Quotas not supported on realtime scratch device"
+	fi
+	;;
+    *)
+	_notrun "disk quotas not supported by this filesystem type: $FSTYP"
+	;;
+    esac
+
+    # SELinux adds extra xattrs which can mess up our expected output.
+    # So, mount with a context, and they won't be created
+    # nfs_t is a "liberal" context so we can use it.
+    if [ -x /usr/sbin/selinuxenabled ] && /usr/sbin/selinuxenabled; then
+        export SELINUX_MOUNT_OPTIONS="-o context=system_u:object_r:nfs_t:s0"
+    fi
+}
+
+#
+# checks that the XFS quota support in the kernel is enabled
+# and that we have valid quota user tools installed.
+#
+_require_xfs_quota()
+{
+    src/feature -q $TEST_DEV
+    [ $? -ne 0 ] && _notrun "Installed kernel does not support XFS quota"
+    if [ "$USE_EXTERNAL" = yes -a ! -z "$TEST_RTDEV" ]; then
+	_notrun "Quotas not supported on realtime test device"
+    fi
+    if [ "$USE_EXTERNAL" = yes -a ! -z "$SCRATCH_RTDEV" ]; then
+	_notrun "Quotas not supported on realtime scratch device"
+    fi
+    [ -n "$XFS_QUOTA_PROG" ] || _notrun "XFS quota user tools not installed"
+}
+
+#
+# checks that the XFS project quota support in the kernel is enabled.
+#
+_require_prjquota()
+{
+    [ -n "$1" ] && _dev="$1" || _dev="$TEST_DEV"
+    src/feature -p $_dev
+    [ $? -ne 0 ] && _notrun "Installed kernel does not support project quotas"
+    if [ "$USE_EXTERNAL" = yes -a ! -z "$_dev" ]; then
+	_notrun "Project quotas not supported on realtime filesystem"
+    fi
+}
+
+#
+# checks for user nobody in /etc/passwd and /etc/group.
+#
+_require_nobody()
+{
+    _cat_passwd | grep -q '^nobody'
+    [ $? -ne 0 ] && _notrun "password file does not contain user nobody."
+
+    _cat_group | egrep -q '^no(body|group)'
+    [ $? -ne 0 ] && _notrun "group file does not contain nobody/nogroup."
+}
+
+# create a file as a specific user (uid)
+# takes filename, id, type (u/g/p), blocksize, blockcount
+#
+_file_as_id()
+{
+    [ $# != 5 ] && _fail "broken call to _file_as_id in test $seq"
+
+    parent=`dirname $1`
+    if [ $3 = p ]; then
+	echo PARENT: xfs_io -r -c "chproj $2" -c "chattr +P" $parent >>$seqres.full
+	$XFS_IO_PROG -r -c "chproj $2" -c "chattr +P" $parent >>$seqres.full 2>&1
+	magik='$>'	# (irrelevent, above set projid-inherit-on-parent)
+    elif [ $3 = u ]; then
+	magik='$>'	# perlspeak for effective uid
+    elif [ $3 = g ]; then
+	magik='$)'	# perlspeak for effective gid
+    else
+	_notrun "broken type in call to _file_as_id in test $seq"
+    fi
+
+    perl <<EOF >>$seqres.full 2>&1
+	\$| = 1;
+	$magik = $2;
+	if ($5 == 0) {
+	    print "touch $1";
+	    exec "touch $1";
+	} else {
+	    print "dd if=/dev/zero of=$1 bs=$4 count=$5";
+	    exec "dd if=/dev/zero of=$1 bs=$4 count=$5";
+	}
+EOF
+# for debugging the above euid change, try... [need write in cwd]
+#	exec "dd if=/dev/zero of=$1 bs=$4 count=$5 >>$seqres.full 2>&1";
+
+    if [ $3 = p ]; then
+	echo PARENT: xfs_io -r -c "chproj 0" -c "chattr -P" $parent >>$seqres.full
+	$XFS_IO_PROG -r -c "chproj 0" -c "chattr -P" $parent >>$seqres.full 2>&1
+    fi
+}
+
+_choose_uid()
+{
+    _cat_passwd | grep '^nobody' | perl -ne '@a = split(/:/); END { printf "id=%d name=%s\n", $a[2],$a[0] }'
+}
+
+_choose_gid()
+{
+    _cat_group | egrep '^no(body|group)' | perl -ne '@a = split(/:/); END { printf "id=%d name=%s\n", $a[2],$a[0] }'
+}
+
+_choose_prid()
+{
+    if [ "X$projid_file" == "X" ]; then
+	projid_file=/etc/projid
+    fi
+    if [ ! -f $projid_file ]; then
+	echo 0
+	return
+    fi
+    perl -ne '@a = split(/:/); END { printf "id=%d name=%s\n", $a[1],$a[0] }' \
+	$projid_file
+}
+
+_qmount()
+{
+    _scratch_unmount >/dev/null 2>&1
+    _scratch_mount || _fail "qmount failed"
+    chmod ugo+rwx $SCRATCH_MNT
+}
+
+#
+# Ensures only the given quota mount option is used
+#
+_qmount_option()
+{
+	# Replace any user defined quota options
+	# with the quota option that we want.
+	# Simplest to do this rather than delete existing ones first because
+	# of the variety of commas and spaces and multiple -o's
+	# that we'd have to cater for. Doesn't matter if we have duplicates.
+	# Use "QUOTA" string so that we don't have any substring confusion
+	# thanks to "quota" which will match with "uquota" and "gquota" etc.
+	export MOUNT_OPTIONS=`echo $MOUNT_OPTIONS \
+	| sed   -e 's/uquota/QUOTA/g'      \
+		-e 's/usrquota/QUOTA/g'    \
+		-e 's/gquota/QUOTA/g'      \
+		-e 's/grpquota/QUOTA/g'    \
+		-e 's/pquota/QUOTA/g'      \
+		-e 's/prjquota/QUOTA/g'      \
+		-e 's/quota/QUOTA/g'       \
+		-e 's/uqnoenforce/QUOTA/g' \
+		-e 's/gqnoenforce/QUOTA/g' \
+		-e 's/pqnoenforce/QUOTA/g' \
+		-e 's/qnoenforce/QUOTA/g'  \
+		-e "s/QUOTA/$1/g"`
+
+	# Ensure we have the given quota option - duplicates are fine
+	export MOUNT_OPTIONS="$MOUNT_OPTIONS -o $1"
+	echo "MOUNT_OPTIONS = $MOUNT_OPTIONS" >>$seqres.full
+}
+
+_check_quota_usage()
+{
+	# Sync to get delalloc to disk
+	sync
+
+	# kill caches to guarantee removal speculative delalloc
+	# XXX: really need an ioctl instead of this big hammer
+	echo 3 > /proc/sys/vm/drop_caches
+
+	VFS_QUOTA=0
+	case $FSTYP in
+	ext2|ext3|ext4|ext4dev|reiserfs|gfs2)
+		VFS_QUOTA=1
+		quotaon -f -u -g $SCRATCH_MNT 2>/dev/null
+		;;
+	*)
+		;;
+	esac
+	repquota -u -n $SCRATCH_MNT  | grep -v "^#0" | _filter_scratch |
+		sort >$tmp.user.orig
+	repquota -g -n $SCRATCH_MNT  | grep -v "^#0" | _filter_scratch |
+		sort >$tmp.group.orig
+	if [ $VFS_QUOTA -eq 1 ]; then
+		quotacheck -u -g $SCRATCH_MNT 2>/dev/null
+	else
+		# use XFS method to force quotacheck
+		xfs_quota -x -c "off -ug" $SCRATCH_MNT
+		_scratch_unmount
+		_scratch_mount "-o usrquota,grpquota"
+	fi
+	repquota -u -n $SCRATCH_MNT  | grep -v "^#0" | _filter_scratch |
+		sort >$tmp.user.checked
+	repquota -g -n $SCRATCH_MNT  | grep -v "^#0" | _filter_scratch |
+		sort >$tmp.group.checked
+	if [ $VFS_QUOTA -eq 1 ]; then
+		quotaon -u -g $SCRATCH_MNT 2>/dev/null
+	fi
+	{
+		echo "Comparing user usage"
+		diff $tmp.user.orig $tmp.user.checked
+	} && {
+		echo "Comparing group usage"
+		diff $tmp.group.orig $tmp.group.checked
+	}
+}
+
+# make sure this script returns success
+/bin/true

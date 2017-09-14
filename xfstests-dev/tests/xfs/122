@@ -1,0 +1,239 @@
+#! /bin/bash
+# FS QA Test No. 122
+#
+# pv#952498
+# Keep an eye on some of the xfs type sizes
+# Motivation from differing ondisk types for 32 and 64 bit word versions.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment
+. ./common/rc
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_command "$INDENT_PROG" indent
+
+rm -f $seqres.full
+
+# filter out known changes to xfs type sizes
+_type_size_filter()
+{
+	# lazy SB adds __be32 agf_btreeblks - pv960372
+	if [ "$($MKFS_XFS_PROG 2>&1 | grep -c lazy-count )" == "0" ]; then
+		perl -ne '
+s/sizeof\( xfs_agf_t \) = 60/sizeof( xfs_agf_t ) = <SIZE>/;
+		print;'
+	else
+		perl -ne '
+s/sizeof\( xfs_agf_t \) = 64/sizeof( xfs_agf_t ) = <SIZE>/;
+		print;'
+	fi
+}
+
+# filter out known changes to xfs type names
+_type_name_filter()
+{
+	sed -e 's/xfs_bmbt_rec_64_t/xfs_bmbt_rec_t/'
+}
+
+_attribute_filter()
+{
+	sed -e 's/__attribute__ *[(][(]packed[)][)]//' \
+	    -e 's/__arch_pack//'
+}
+
+cprog=$tmp.get_structs.c
+oprog=$tmp.get_structs
+progout=$tmp.output
+keyfile=$tmp.keys
+
+cat >$cprog <<EOF
+#define _GNU_SOURCE
+#include <stdio.h>
+EOF
+for hdr in /usr/include/xfs/xfs*.h; do
+	echo "#include <$(echo "$hdr" | sed -e 's|/usr/include/||g')>" >> $cprog
+done
+
+# missing:
+# xfs_attr_shortform_t
+# xfs_trans_header_t
+
+cat >$tmp.ignore <<EOF
+xfs_buf_log_format_t
+xfs_attr3_icleaf_hdr
+xfs_da3_icnode_hdr
+xfs_dir3_icfree_hdr
+xfs_dir3_icleaf_hdr
+xfs_name
+xfs_owner_info
+xfs_refcount_irec
+xfs_rmap_irec
+xfs_alloctype_t
+xfs_buf_cancel_t
+xfs_bmbt_rec_32_t
+xfs_swapext_t
+xfs_dirops_t
+xfs_efi_log_item_t
+xfs_efd_log_item_t
+xfs_iocore_t
+xfs_ihash_t
+xfs_chashlist_t
+xfs_chash_t
+xfs_iptr_t
+xfs_dmops_t
+xfs_qmops_t
+xfs_ioops_t
+xfs_mod_sb_t
+xfs_dqtrx_t
+xfs_dqtrxops_t
+xfs_ail_t
+xfs_ail_entry_t
+xfs_item_ops_t
+xfs_log_busy_slot_t
+xfs_log_busy_chunk_t
+xfs_inode_log_format_t
+xfs_efi_log_format_t
+xfs_efd_log_format_t
+xfs_perag_busy_t
+xfs_perag_t
+xfs_alloc_arg_t
+xfs_attr_list_context_t
+xfs_attr_sf_sort_t
+xfs_bmbt_irec_t
+xfs_bmbt_rec_host_t
+xfs_bmap_free_item_t
+xfs_bmap_free_t
+xfs_bmalloca_t
+xfs_btree_cur_t
+xfs_buf_log_item_t
+xfs_buf_log_format_v1_t
+xfs_da_args_t
+xfs_dabuf_t
+xfs_da_state_blk_t
+xfs_da_state_path_t
+xfs_da_state_t
+xfs_dinode_t
+xfs_dircook_t
+xfs_dir2_block_t
+xfs_dir2_data_entry_t
+xfs_dir2_data_union_t
+xfs_dir2_data_t
+xfs_dir2_put_args_t
+xfs_dir_put_args_t
+xfs_dir_sf_sort_t
+xfs_extent_t
+xfs_ext_irec_t
+xfs_extdelta_t
+xfs_flock64_t
+xfs_fsop_geom_v1_t
+xfs_growfs_data_t
+xfs_growfs_rt_t
+xfs_bstime_t
+xfs_bstat_t
+xfs_fsop_bulkreq_t
+xfs_icsb_cnts_t
+xfs_icdinode_t
+xfs_ictimestamp_t
+xfs_inobt_rec_incore_t
+xfs_inogrp_t
+xfs_fid2_t
+xfs_fsop_handlereq_t
+xfs_fsop_setdm_handlereq_t
+xfs_fsop_attrlist_handlereq_t
+xfs_attr_multiop_t
+xfs_fsop_attrmulti_handlereq_t
+xfs_imap_t
+xfs_ifork_t
+xfs_inode_t
+xfs_inode_log_item_t
+xfs_log_iovec_t
+xfs_log_callback_t
+xfs_metablock_t
+xfs_mount_t
+xfs_sb_t
+xfs_log_item_t
+xfs_log_item_desc_t
+xfs_log_item_chunk_t
+xfs_trans_t
+xfs_dirent_t
+xfs_fsop_getparents_handlereq_t
+xfs_dinode_core_t
+EOF
+
+echo 'int main(int argc, char *argv[]) {' >>$cprog
+
+#
+# Printfs of typedef sizes
+#
+cat /usr/include/xfs/xfs*.h | indent |\
+_attribute_filter |\
+egrep '(} *xfs_.*_t|^struct xfs_[a-z0-9_]*$)' > /tmp/barf
+
+cat /usr/include/xfs/xfs*.h | indent |\
+_attribute_filter |\
+egrep '(} *xfs_.*_t|^struct xfs_[a-z0-9_]*$)' |\
+egrep -v -f $tmp.ignore |\
+sed -e 's/^.*}[[:space:]]*//g' -e 's/;.*$//g' -e 's/_t, /_t\n/g' |\
+sort | uniq |\
+awk '{printf("printf(\"sizeof(%s) = \\%zu\\n\", sizeof(%s));\n", $0, $0);}' |\
+cat >> $cprog
+
+#
+# Look at offsets of key ones which differ in lengths
+#
+
+# xfs_sb_t
+cat /usr/include/xfs/xfs*.h | indent |\
+awk '
+   /typedef struct xfs_sb/ { structon = 1; next }
+   structon && $2 ~ /^sb_/ { sub(/[;,]/,"",$2)
+                             printf("printf(\"offsetof(xfs_sb_t, %s) = \\%zu\\n\", offsetof(xfs_sb_t, %s));", $2, $2); next}
+   structon && /}/ { structon = 0; next}
+'>>$cprog
+
+echo 'return 0; }' >>$cprog
+
+# create and run program
+cc -o $oprog $cprog >> $seqres.full 2>&1 || \
+  _notrun "Could not compile test program (see end of $seqres.full)"
+$oprog | _type_size_filter | _type_name_filter > $progout
+
+# Find all the items that only exist in the golden output
+comm -23 <(grep '=' $0.out | sed -e 's/ =.*$//g' | LC_COLLATE=POSIX sort) \
+	 <(sed -e 's/ =.*$//g' < $progout | LC_COLLATE=POSIX sort) > $keyfile
+
+# Copy those items to the program output
+grep -F -f $keyfile $0.out >> $progout
+
+LC_COLLATE=POSIX sort $progout
+
+status=0

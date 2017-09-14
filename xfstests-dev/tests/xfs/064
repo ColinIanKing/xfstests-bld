@@ -1,0 +1,109 @@
+#! /bin/bash
+# FS QA Test No. 064
+#
+# test multilevel dump and restores with hardlinks
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/dump
+
+_ls_size_filter()
+{
+    #
+    # Print size ($5) and fname ($9).
+    # The size is significant since we add to the file as part
+    # of a file change for the incremental.
+    #
+    # Filter out the housekeeping files of xfsrestore
+    #
+    $AWK_PROG 'NF == 9 { print $5, $9 }' |\
+    egrep -v 'dumpdir|housekeeping|dirattr|dirextattr|namreg|state|tree' 
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_create_dumpdir_hardlinks 9
+
+echo "Do the incremental dumps"
+i=0
+while [ $i -le 9 ]; do
+    if [ $i -gt 0 ]; then
+	sleep 2
+	_modify_level $i
+    fi 
+
+    _stable_fs
+    sleep 2
+
+    echo "********* level $i ***********" >>$seqres.full
+    date >>$seqres.full
+    find $SCRATCH_MNT -exec $here/src/lstat64 {} \; | sed 's/(00.*)//' >$tmp.dates.$i
+    if [ $i -gt 0 ]; then
+       let level_1=$i-1
+       diff -c $tmp.dates.$level_1 $tmp.dates.$i >>$seqres.full
+    else
+       cat $tmp.dates.$i >>$seqres.full
+    fi
+
+    _do_dump_file -f $tmp.df.level$i -l $i
+    let i=$i+1
+done
+
+echo "Listing of what files we start with:"
+ls -l $dump_dir | _ls_size_filter
+
+echo "Look at what files are contained in the inc. dump"
+i=0
+while [ $i -le 9 ]; do
+    echo ""
+    echo "restoring from df.level$i"
+    _do_restore_toc -f $tmp.df.level$i
+    let i=$i+1
+done
+
+echo "Do the cumulative restores"
+_prepare_restore_dir
+i=0
+while [ $i -le 9 ]; do
+    echo ""
+    echo "restoring from df.level$i"
+    _do_restore_file_cum -f $tmp.df.level$i
+    echo "ls -l restore_dir"
+    ls -lR $restore_dir | _ls_size_filter | _check_quota_file
+    let i=$i+1
+done
+
+# success, all done
+status=0
+exit

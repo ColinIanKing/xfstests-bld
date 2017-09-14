@@ -1,0 +1,89 @@
+#! /bin/bash
+# FS QA Test No. 034
+#
+# pv 801241 - check for reference leaks from the *handle xfsctls
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+    echo "*** unmount"
+    _scratch_unmount 2>/dev/null
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+
+echo "*** init FS"
+
+rm -f $seqres.full
+_scratch_unmount >/dev/null 2>&1
+echo "*** MKFS ***"                         >>$seqres.full
+echo ""                                     >>$seqres.full
+_scratch_mkfs_xfs                           >>$seqres.full 2>&1 \
+    || _fail "mkfs failed"
+_scratch_mount                              >>$seqres.full 2>&1 \
+    || _fail "mount failed"
+
+echo "*** test"
+
+_check_scratch_fs
+
+if ! touch $SCRATCH_MNT/fish
+then
+    echo "!!! failed to touch fish"
+    exit
+fi
+
+if ! src/xfsctl $SCRATCH_MNT $SCRATCH_MNT/fish >>$seqres.full 2>&1
+then
+    echo "!!! failed to run xfsctl test program"
+    exit
+fi
+
+if ! rm $SCRATCH_MNT/fish
+then
+    echo "!!! failed to remove fish"
+    exit
+fi
+
+# pv 801241 causes corruption here (inode left in agi_unlinked list)
+echo "*** done"
+# happy exit
+status=0
+exit 0

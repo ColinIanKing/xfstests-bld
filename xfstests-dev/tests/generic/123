@@ -1,0 +1,77 @@
+#! /bin/bash
+# FSQA Test No. 123
+#
+# Make sure user cannot overwrite, append, delete or move a file created by 
+# root. Modified CXFSQA test 940960 and 940558.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd $TEST_DIR
+    rm -rf $my_test_subdir
+    cd /
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux IRIX
+
+_require_test
+_require_user
+
+my_test_subdir=$TEST_DIR/123subdir
+
+# create subdir with required permissions
+mkdir -m 755 $my_test_subdir
+
+echo foo > $my_test_subdir/data_coherency.txt
+# check basic appending to a file
+echo bar >> $my_test_subdir/data_coherency.txt
+
+# try append
+_user_do "echo goo >> $my_test_subdir/data_coherency.txt" 
+
+# try overwrite 
+_user_do "echo goo > $my_test_subdir/data_coherency.txt" 
+
+# try delete
+_user_do "rm $my_test_subdir/data_coherency.txt" 
+
+# try move
+_user_do "mv $my_test_subdir/data_coherency.txt $my_test_subdir/data_coherency2.txt" 
+
+cat $my_test_subdir/data_coherency.txt
+
+exit

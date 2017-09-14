@@ -1,0 +1,114 @@
+#! /bin/bash
+# FS QA Test No. 033
+#
+# exercise xfs_repair repairing broken filesystems (root inodes)
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seqfull=$0
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+    cd /
+    _scratch_unmount 2>/dev/null
+    rm -f $tmp.*
+}
+
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/repair
+
+# nuke the root, rt bitmap, and rt summary inodes
+# 
+_check_root_inos()
+{
+	echo "Corrupting root inode - setting bits to $1"
+	_check_repair $1 "inode $rootino"
+	echo "Corrupting rt bitmap inode - setting bits to $1"
+	_check_repair $1 "inode $rbmino"
+	echo "Corrupting rt summary inode - setting bits to $1"
+	_check_repair $1 "inode $rsumino"
+}
+
+#
+# pv#909621
+# IRIX checks for valid user and group ids as we have a 
+# limit of MAXID
+# As it is unsigned on Linux, this test is not done
+# (i.e. -1 is a valid id on Linux but not on IRIX)
+# So we make the output the same for both OS's.
+#
+_filter_bad_ids()
+{
+	egrep -v 'bad user id 0xffffffff|bad group id 0xffffffff'
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_require_scratch
+_require_no_large_scratch_dev
+
+# devzero blows away 512byte blocks, so make 512byte inodes (at least)
+_scratch_mkfs_xfs | _filter_mkfs 2>$tmp.mkfs >/dev/null
+. $tmp.mkfs
+if [ $isize -lt 512 ]; then
+	_scratch_mkfs_xfs -isize=512 | _filter_mkfs 2>$tmp.mkfs >/dev/null
+	. $tmp.mkfs
+fi
+
+# link correct .out file
+FEATURES=$(_get_os_name)
+if [ $_fs_has_crcs -eq 1 ]; then
+	FEATURES=$FEATURES,crc
+fi
+_link_out_file_named $seqfull.out "$FEATURES"
+
+`xfs_db -r -c sb -c p $SCRATCH_DEV | grep 'ino = ' | \
+	sed -e 's/ //g' -e 's/^/export /'`
+
+# check we won't get any quota inodes setup on mount
+_scratch_mount
+src/feature -U $SCRATCH_DEV && \
+	_notrun "UQuota are enabled, test needs controlled sb recovery"
+src/feature -G $SCRATCH_DEV && \
+	_notrun "GQuota are enabled, test needs controlled sb recovery"
+src/feature -P $SCRATCH_DEV && \
+	_notrun "PQuota are enabled, test needs controlled sb recovery"
+_scratch_unmount
+
+# rootino, rbmino, and rsumino are now set (lets blow em away!)
+_check_root_inos 0
+_check_root_inos -1 | _filter_bad_ids
+
+# success, all done
+status=0
+exit

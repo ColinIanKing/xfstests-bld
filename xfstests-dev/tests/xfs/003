@@ -1,0 +1,91 @@
+#! /bin/bash
+# FS QA Test No. 003
+#
+# exercise xfs_db bug #784078
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+tmp=/tmp/$$
+here=`pwd`
+status=0	# success is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+_require_test
+
+[ -f core ] && rm -f core
+[ -f core ] && echo "Warning: can't nuke existing core file!"
+
+test_done()
+{
+        sts=$?
+        [ -f core ] && echo "FAILED - core file"
+        [ ! -f core -a $sts != 0 ] && echo "FAILED - non-zero exit status"
+        rm -f core
+}
+
+# real QA test starts here
+
+echo "=== TEST 1 ==="
+xfs_db -r -c 'pop' -c 'type sb' $TEST_DEV
+test_done
+
+echo "=== TEST 2 ==="
+xfs_db -r -c 'push sb' $TEST_DEV
+test_done
+
+echo "=== TEST 3 ==="
+xfs_db -r -c 'pop' -c 'push sb' $TEST_DEV
+test_done
+
+echo "=== TEST 4 ==="
+xfs_db -r -c 'type sb' -c 'print' $TEST_DEV
+test_done
+
+echo "=== TEST 5 ==="
+xfs_db -r -c 'inode 128' -c 'push' -c 'type' $TEST_DEV >$tmp.out 2>&1
+test_done
+# On IRIX we lose state after a "push" operation and don't
+# know the type is still inode
+# Probably not worth changing xfs_db on IRIX for this.
+if [ "$HOSTOS" != "IRIX" ]; then
+    if ! grep -q "current type is \"inode\"" $tmp.out
+    then
+	    cat $tmp.out
+    fi
+fi
+
+echo "=== TEST 6 ==="
+xfs_db -r -c 'sb' -c 'a' $TEST_DEV >$tmp.out 2>&1 # don't care about output
+test_done
+
+echo "=== TEST 7 ==="
+xfs_db -r -c 'ring' $TEST_DEV
+test_done

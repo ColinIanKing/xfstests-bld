@@ -1,0 +1,134 @@
+#! /bin/bash
+# FS QA Test No. 052
+#
+# Ensure that quota(1) displays blocksizes matching ondisk dquots.
+#
+# MOUNT_OPTIONS can be set to gquota to test group quota,
+# defaults to uquota if MOUNT_OPTIONS is not set.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/quota
+
+_cleanup()
+{
+	cd /
+	_scratch_unmount 2>/dev/null
+	rm -f $tmp.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+rm -f $seqres.full
+
+_require_scratch
+_require_xfs_quota
+_require_nobody
+
+# setup a default run
+_qmount_option uquota
+
+_scratch_mkfs_xfs | _filter_mkfs 2>$tmp.mkfs
+cat $tmp.mkfs >>$seqres.full
+chmod a+w $seqres.full     # arbitrary users will write here
+
+# keep the blocksize from mkfs ($dbsize)
+. $tmp.mkfs
+
+_qmount
+
+# setup user/group to test
+if src/feature -U $SCRATCH_DEV ; then
+	type=u; eval `_choose_uid`
+elif src/feature -G $SCRATCH_DEV ; then
+	type=g; eval `_choose_gid`
+elif src/feature -P $SCRATCH_DEV ; then
+	type=p; eval `_choose_prid`
+else
+	_notrun "No quota support at mount time"
+fi
+
+# create 100 (fs-blocksize) blocks
+_file_as_id $SCRATCH_MNT/foo $id $type $dbsize 220
+sync
+
+# set limit at 1001 (1k) blocks
+bsoft=1001
+bhard=1001
+isoft=10
+ihard=10
+xfs_quota -x \
+	-c "limit -$type bsoft=${bsoft}k bhard=${bhard}k $id" \
+	-c "limit -$type isoft=$isoft ihard=$ihard $id" \
+	$SCRATCH_DEV
+
+# cross check blks, softblks, hardblks <-> quota, xfs_db
+xfs_quota -c "quota -$type -birnN $id" $SCRATCH_DEV |
+			tr -d '\n' | tr -s '[:space:]' | tee -a $seqres.full |
+	perl -ne 'if (m[^\s*'$SCRATCH_DEV'\s+(\d+)\s+(\d+)\s+(\d+)]) {
+		print "used_blocks=", $1, "\n";
+		print "soft_blocks=", $2, "\n";
+		print "hard_blocks=", $3, "\n";
+		$next = 0;
+	}' | LC_COLLATE=POSIX sort >$tmp.quota
+
+echo ===quota output >> $seqres.full
+cat $tmp.quota >> $seqres.full
+[ ! -s $tmp.quota ] && echo "warning: quota output file is empty"
+
+_scratch_unmount
+
+# note - does (insitu) conversion from fs blocks to 1K blocks
+xfs_db -rc "dquot -$type $id" -c p $SCRATCH_DEV | tee -a $seqres.full | perl -ne '
+	if (/^diskdq.bcount = (\d+)$/) {
+		 print "used_blocks=", $1 * '$dbsize' / 1024, "\n";
+	}
+	elsif (/^diskdq.blk_hardlimit = (\d+)$/) {
+		 print "hard_blocks=", $1 * '$dbsize' / 1024, "\n";
+	}
+	elsif (/^diskdq.blk_softlimit = (\d+)$/) {
+		print "soft_blocks=", $1 * '$dbsize' / 1024, "\n";
+	}' | LC_COLLATE=POSIX sort >$tmp.xfs_db
+
+echo ===xfs_db output >> $seqres.full
+cat $tmp.xfs_db >> $seqres.full
+[ ! -s $tmp.xfs_db ] && echo "warning: xfs_db output file is empty"
+
+echo Comparing out of xfs_quota and xfs_db
+diff $tmp.quota $tmp.xfs_db
+[ $? -eq 0 ] && echo OK.
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,89 @@
+#! /bin/bash
+# FS QA Test No. 195
+#
+# Make sure the chattr dump flag gets picked up by xfsdump without a sync
+#
+# http://oss.sgi.com/bugzilla/show_bug.cgi?id=340
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+	rm -rf $TEST_DIR/d
+	rm -f $TEST_DIR/dumpfile
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+#
+# Perform a level 0 dump that respects the chattr dump exclude flag,
+# and grep the output for the inode number we expect / do not expect
+# to be skipped
+#
+# Only dump a subtree so we get away with a single partition for
+# the subtree to be dumped and the dump file.
+#
+_do_dump()
+{
+	$XFSDUMP_PROG -l 0 -s d -F  \
+		-L prova -M prova \
+		-f $TEST_DIR/dumpfile -v excluded_files=debug $TEST_DIR \
+		| grep "ino $inum" \
+		| sed -e 's/.*xfsdump: pruned ino [0-9]*, owner 0, estimated size 0: skip flag set/xfsdump: pruned ino NNN, owner 0, estimated size 0: skip flag set/'
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_test
+_require_user
+_require_command "$XFSDUMP_PROG" xfsdump
+
+echo "Preparing subtree"
+mkdir $TEST_DIR/d
+touch $TEST_DIR/d/t
+inum=`stat -c "%i" $TEST_DIR/d/t`
+
+echo "No dump exclude flag set (should not be skipped)"
+_do_dump
+
+echo "Dump exclude flag set, but no sync yet (should be skipped)"
+$CHATTR_PROG +d $TEST_DIR/d/t
+_do_dump
+
+echo "Dump exclude flag set, after sync (should be skipped)"
+sync
+_do_dump
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

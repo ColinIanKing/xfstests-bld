@@ -1,0 +1,22 @@
+QA output created by 098
+Blocks modified: [200 - 224]
+File contents before power failure:
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+144 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+151 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+310 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+341
+File contents after log replay:
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+144 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+151 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+310 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+341

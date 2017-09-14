@@ -1,0 +1,94 @@
+#! /bin/bash
+# FS QA Test No. 005
+#
+# Test symlinks & ELOOP
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+#
+# Note1: On Linux, ELOOP limit used to be 32 but changed to 8, and lately
+# its become 5.  Who knows what it might be next.
+# Note2: On IRIX, the limit is around the 30 mark.
+# 
+# What we are looking for here is: no panic due to blowing the stack;
+# and that the ELOOP error code is returned at some point (the actual
+# limit point is unimportant, just checking that we do hit it).
+# 
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd $TEST_DIR
+    rm -f symlink_{0,1,2,3,4}{0,1,2,3,4,5,6,7,8,9} symlink_self empty_file
+    cd /
+}
+
+_touch()
+{
+    # On IRIX: Too many symbolic links in path name traversal
+    # On Linux: Too many levels of symbolic links
+    touch $@ 2>&1 | grep -q 'Too many.*symbolic links'
+    if [ $? -eq 0 ]; then
+	echo "ELOOP returned.  Good."
+    else
+	echo "No ELOOP?  Unexpected!"
+    fi
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_require_test
+_require_test_symlinks
+
+_supported_os Linux IRIX
+
+cd $TEST_DIR
+
+o=empty_file
+touch $o
+for f in symlink_{0,1,2,3,4}{0,1,2,3,4,5,6,7,8,9}
+do
+    ln -s $o $f
+    o=$f
+done
+
+ln -s symlink_self symlink_self
+
+echo "*** touch deep symlinks"
+echo ""
+_touch symlink_{0,1,2,3,4}{0,1,2,3,4,5,6,7,8,9}
+echo ""
+echo "*** touch recusive symlinks"
+echo ""
+_touch symlink_self
+
+exit

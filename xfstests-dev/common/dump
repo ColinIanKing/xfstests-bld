@@ -1,0 +1,1534 @@
+##/bin/bash
+#
+# Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# Functions useful for xfsdump/xfsrestore tests
+#
+
+# --- initializations ---
+rm -f $seqres.full
+
+if [ -n "$DEBUGDUMP" ]; then
+	_dump_debug=-v4
+	_restore_debug=-v4
+	_invutil_debug=-d
+
+	# Use dump/restore in qa directory (copy them here) for debugging
+	export PATH="$here:$PATH"
+	export __XFSDUMP_PROG="`set_prog_path xfsdump`"
+	export XFSDUMP_PROG="$__XFSDUMP_PROG -e"
+	export XFSRESTORE_PROG="`set_prog_path xfsrestore`"
+	export XFSINVUTIL_PROG="`set_prog_path xfsinvutil`"
+	[ -x $here/xfsdump ]    && echo "Using xfstests' xfsdump for debug"
+	[ -x $here/xfsrestore ] && echo "Using xfstests' xfsrestore for debug"
+	[ -x $here/xfsinvutil ] && echo "Using xfstests' xfsinvutil for debug"
+fi
+
+[ "$XFSDUMP_PROG" = "" ]    && _notrun "xfsdump not found"
+[ "$XFSRESTORE_PROG" = "" ] && _notrun "xfsrestore not found"
+[ "$XFSINVUTIL_PROG" = "" ] && _notrun "xfsinvutil not found"
+
+# status returned for not run tests
+NOTRUNSTS=2
+
+# name those directories
+dump_file=$tmp.dumpfile
+# dump_file=$here/dumpfile #TEMP OVERRIDE DUMP FILE
+dump_sdir=dumpdir
+dump_dir=$SCRATCH_MNT/$dump_sdir
+restore_sdir=restoredir
+restore_dir=$SCRATCH_MNT/$restore_sdir
+multi=3
+dumptape=$TAPE_DEV
+media_label="stress_tape_media"
+session_label="stress_$seq"
+
+nobody=4 # define this uid/gid as a number
+do_quota_check=true # do quota check if quotas enabled
+
+# install our cleaner
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# start inventory from a known base - move it aside for test
+for dir in /var/xfsdump/inventory /var/lib/xfsdump/inventory; do
+    if [ -d $dir ]; then
+	[ -d $dir.$seq ] && rm -rf $dir.$seq
+	mv $dir $dir.$seq
+    fi
+done
+
+have_mtvariable=false
+[ `uname` = "Linux" ] && have_mtvariable=true
+
+
+_require_multi_stream()
+{
+    $XFSDUMP_PROG -JF -f /dev/null -f /dev/null 2> /dev/null |
+    grep -q "too many -f arguments" &&
+    _notrun "xfsdump multi-stream support required"
+}
+
+_require_legacy_v2_format()
+{
+    $XFSDUMP_PROG 2>&1 |
+    grep -q "generate format 2 dump" ||
+    _notrun "xfsdump -K option required"
+
+    $XFSRESTORE_PROG 2>&1 |
+    grep -q "force use of format 2 generation" ||
+    _notrun "xfsrestore -K option required"
+}
+
+#
+# do a remote/local mt
+#
+_mt()
+{
+    op=$1
+    if _isrmt; then
+	# REMOTE
+	_rmtdev=`echo $dumptape | $AWK_PROG -F: '{print $2}'`
+
+        if echo $dumptape | grep '@' >/dev/null; then
+	    _spec=`echo $dumptape | $AWK_PROG -F: '{print $1}'`
+	    _rmtuser=`echo $_spec | $AWK_PROG -F@ '{print $1}'`
+	    _rmthost=`echo $_spec | $AWK_PROG -F@ '{print $2}'`
+	    rsh -n -l $_rmtuser $_rmthost "mt -t $_rmtdev $op"
+	else
+	    _rmthost=`echo $dumptape | $AWK_PROG -F: '{print $1}'`
+	    rsh -n $_rmthost "mt -t $_rmtdev $op"
+	fi
+    else
+	#LOCAL
+	mt -t $dumptape $op
+    fi
+}
+
+_check_onl()
+{
+    _limit=10
+    i=0
+    while [ $i -lt $_limit ]; do
+        echo "Checking online..." >>$seqres.full
+	if _mt status >$tmp.status 2>&1; then
+	    break;
+	else
+	    sleep 1
+	fi
+	let i=$i+1
+    done
+
+
+    if [ $i -eq $_limit ]; then
+	echo "ERROR: mt -f $dumptape failed"
+	cat $tmp.status
+
+	_notrun "mt -f $dumptape failed"
+    fi
+
+
+    if egrep -i 'onl|ready' $tmp.status | grep -iv 'not ready' >/dev/null; then
+	:
+    else
+	echo "ERROR: $dumptape is not online"
+	cat $tmp.status
+
+	_notrun "dumptape, $dumptape, is not online"
+    fi
+}
+
+_wait_tape()
+{
+    echo "Wait for tape, $dumptape, ..." >>$seqres.full
+
+    i=0
+    while [ $i -lt 20 ]; do
+        echo "Checking status..." >>$seqres.full
+	if _mt status 2>&1 | tee -a $seqres.full | egrep -i "onl|ready" >/dev/null; then
+	    break;
+	else
+	    sleep 1
+	fi
+	let i=$i+1
+    done
+}
+
+#
+# Keep trying so we know we really have rewound
+#
+_rewind()
+{
+    echo "Initiate rewind..." >>$seqres.full
+    _wait_tape
+    _mt rewind >/dev/null
+    _wait_tape
+}
+
+#
+# Do a custom erase because:
+# (i) some machines don't support it
+# (ii) some machines take forever to do it
+#
+_erase_soft()
+{
+    echo "Erasing tape" | tee -a $seqres.full
+    _rewind
+    _mt weof 3
+    _rewind
+}
+
+_erase_hard()
+{
+    echo "Erasing tape" | tee -a $seqres.full
+    _mt erase
+}
+
+_isrmt()
+{
+    echo $dumptape | grep ':' >/dev/null
+}
+
+#
+# Get tape ready
+#
+_set_variable()
+{
+    $have_mtvariable || return
+
+    if _isrmt; then
+	:
+    else
+	# LOCAL
+	echo "Put scsi tape driver into variable block size mode"
+	mt -f $dumptape setblk 0
+    fi
+}
+
+_require_tape()
+{
+    dumptape=$1
+
+    if [ -z "$dumptape" -o "@" == "$dumptape" ]; then
+	_notrun "No dump tape specified"
+    fi
+
+    _check_onl
+    _set_variable
+}
+
+_wipe_fs()
+{
+    _require_scratch
+
+    _scratch_mkfs_xfs >>$seqres.full || _fail "mkfs failed"
+    _scratch_mount >>$seqres.full || _fail "mount failed"
+}
+
+#
+# Cleanup created dirs and files
+# Called by trap
+#
+_cleanup()
+{
+    # Some tests include this before checking _supported_fs xfs
+    # and the sleeps & checks here get annoying
+    if [ "$FSTYP" != "xfs" ]; then
+       return
+    fi
+
+    cd $here
+    rm -f $tmp.*
+
+    if [ -n "$DEBUGDUMP" ]; then
+	# save it for inspection
+	for dir in /var/xfsdump/inventory /var/lib/xfsdump/inventory; do
+	    [ -d $dir ] || continue
+	    tar -cvf $seqres.inventory.tar $dir
+	    ls -nR $dir >$seqres.inventory.ls
+	done
+    fi
+
+    # put inventory dir back
+    for dir in /var/xfsdump/inventory /var/lib/xfsdump/inventory; do
+	[ -d $dir.$seq ] || continue
+	rm -rf $dir		# get rid of new one
+	mv $dir.$seq $dir
+    done
+
+    if [ $status -ne $NOTRUNSTS ]; then
+	# Sleep added to stop _check_scratch_fs from complaining that the
+	# scratch_dev is still busy
+	sleep 10
+
+	_check_scratch_fs
+    fi
+}
+
+#
+# ensure that bulkstat data will
+# match with incore data
+# by forcing disk data to be written out
+#
+_stable_fs()
+{
+    _saveddir=`pwd`; cd /
+    _scratch_unmount >>$seqres.full || _fail "unmount failed"
+    _scratch_mount >>$seqres.full || _fail "mount failed"
+    cd $_saveddir
+}
+
+#
+# Run fsstress to create a mixture of
+# files,dirs,links,symlinks
+#
+# Pinched from test 013.
+# Takes one argument, the number of ops to perform
+#
+_create_dumpdir_stress_num()
+{
+    echo "Creating directory system to dump using fsstress."
+
+    _count=$1
+    _wipe_fs
+
+    _param="-f link=10 -f creat=10 -f mkdir=10 -f truncate=5 -f symlink=10"
+    rm -rf $dump_dir
+    if ! mkdir $dump_dir; then
+        echo "    failed to mkdir $dump_dir"
+        status=1
+        exit
+    fi
+    echo ""
+    echo "-----------------------------------------------"
+    echo "fsstress : $_param"
+    echo "-----------------------------------------------"
+    if ! $here/ltp/fsstress $_param -s 1 $FSSTRESS_AVOID -n $_count -d $dump_dir >$tmp.out 2>&1
+    then
+        echo "    fsstress (count=$_count) returned $? - see $seqres.full"
+
+        echo "--------------------------------------"       >>$seqres.full
+        echo "output from fsstress:"                        >>$seqres.full
+        echo "--------------------------------------"       >>$seqres.full
+        cat $tmp.out                                        >>$seqres.full
+        status=1
+    fi
+
+    _stable_fs
+}
+
+_create_dumpdir_stress() {
+	_create_dumpdir_stress_num 240
+}
+
+_mk_fillconfig1()
+{
+    cat <<End-of-File >$tmp.config
+# pathname	size in bytes	owner	group
+#
+small		10	$nobody	$nobody
+big		102400	daemon	sys
+sub/small	10	bin	bin
+sub/big		102400	$nobody	sys
+#
+sub/a		1	$nobody	$nobody
+sub/b		2	$nobody	$nobody
+sub/c		4	$nobody	$nobody
+sub/d		8	$nobody	$nobody
+sub/e		16	$nobody	$nobody
+sub/f		32	$nobody	$nobody
+sub/g		64	$nobody	$nobody
+sub/h		128	$nobody	$nobody
+sub/i		256	$nobody	$nobody
+sub/j		512	$nobody	$nobody
+sub/k		1024	$nobody	$nobody
+sub/l		2048	$nobody	$nobody
+sub/m		4096	$nobody	$nobody
+sub/n		8192	$nobody	$nobody
+#
+sub/a00		100	$nobody	$nobody
+sub/b00		200	$nobody	$nobody
+sub/c00		400	$nobody	$nobody
+sub/d00		800	$nobody	$nobody
+sub/e00		1600	$nobody	$nobody
+sub/f00		3200	$nobody	$nobody
+sub/g00		6400	$nobody	$nobody
+sub/h00		12800	$nobody	$nobody
+sub/i00		25600	$nobody	$nobody
+sub/j00		51200	$nobody	$nobody
+sub/k00		102400	$nobody	$nobody
+sub/l00		204800	$nobody	$nobody
+sub/m00		409600	$nobody	$nobody
+sub/n00		819200	$nobody	$nobody
+#
+sub/a000	1000	$nobody	$nobody
+sub/e000	16000	$nobody	$nobody
+sub/h000	128000	$nobody	$nobody
+sub/k000	1024000	$nobody	$nobody
+End-of-File
+}
+
+_mk_fillconfig2()
+{
+    cat <<End-of-File >$tmp.config
+# pathname	size in bytes
+#
+smalll		10	$nobody	$nobody
+biggg		102400	$nobody	$nobody
+sub/smalll	10	$nobody	$nobody
+sub/biggg	102400	$nobody	$nobody
+End-of-File
+}
+
+_mk_fillconfig_perm()
+{
+    # dir_guid: ugo=rwx,g+s on dir is for IRIX chmod(1)
+
+    cat <<End-of-File >$tmp.config
+# pathname	size/dir  user group mode
+#
+file_suid	10	$nobody	$nobody	04777
+file_guid	10	$nobody	$nobody	02777
+file_sticky	10	$nobody	$nobody	01777
+file_mix1	10	$nobody	$nobody	761
+file_mix2	10	$nobody	$nobody	642
+dir_suid	d	$nobody	$nobody	04777
+dir_guid	d	$nobody	$nobody	ugo=rwx,g+s
+dir_sticky	d	$nobody	$nobody	01777
+dir_mix1	d	$nobody	$nobody	761
+dir_mix2	d	$nobody	$nobody	642
+End-of-File
+}
+
+_mk_fillconfig_ea()
+{
+    cat <<End-of-File >$tmp.config
+# pathname	size    user    group    perm   name value namespace
+#
+smalll		10	$nobody	$nobody  777    attr1 some_text   user
+biggg		102400	$nobody	$nobody  777    attr2 some_text2  root
+sub/smalll	10	$nobody	$nobody  777    attr3 some_text3  user
+sub/biggg	102400	$nobody	$nobody  777    attr4 some_text4  root
+dir		d	$nobody $nobody  777    attr5 dir_text    user
+#
+# Add more files so that there are more than the number
+# of streams.
+# There are bugs in dump/restore for # non-dir files < # streams
+# It can be tested in another configuration.
+# It is a pathalogical case.
+#
+sub/a		1	$nobody	$nobody
+sub/b		2	$nobody	$nobody
+sub/c		4	$nobody	$nobody
+sub/d		8	$nobody	$nobody
+sub/e		16	$nobody	$nobody
+sub/f		32	$nobody	$nobody
+sub/g		64	$nobody	$nobody
+sub/h		128	$nobody	$nobody
+sub/i		256	$nobody	$nobody
+sub/j		512	$nobody	$nobody
+sub/k		1024	$nobody	$nobody
+sub/l		2048	$nobody	$nobody
+sub/m		4096	$nobody	$nobody
+sub/n		8192	$nobody	$nobody
+End-of-File
+}
+
+#
+# extended file attribute flags
+#
+_mk_fillconfig_xattr()
+{
+    cat <<End-of-File >$tmp.config
+# pathname	size    user    group    perm   name
+#
+xflag_realtime	10	$nobody $nobody  777    XFS_XFLAG_REALTIME
+xflag_prealloc	10	$nobody $nobody  777    XFS_XFLAG_PREALLOC
+xflag_immutable 10	$nobody $nobody  777    XFS_XFLAG_IMMUTABLE
+xflag_append	10	$nobody $nobody  777    XFS_XFLAG_APPEND
+xflag_sync	10	$nobody $nobody  777    XFS_XFLAG_SYNC
+xflag_noatime	10	$nobody $nobody  777    XFS_XFLAG_NOATIME
+xflag_nodump	10	$nobody $nobody  777    XFS_XFLAG_NODUMP
+xflag_hasattr	10	$nobody $nobody  777    XFS_XFLAG_HASATTR
+End-of-File
+}
+
+#
+# Create a bunch of directories/files of different sizes
+# filled with data.
+#
+# Pinched from test 001.
+#
+_do_create_dumpdir_fill()
+{
+    echo "Creating directory system to dump using src/fill."
+
+    mkdir -p $dump_dir || _fail "cannot mkdir \"$dump_dir\""
+    cd $dump_dir
+
+    $verbose && echo -n "Setup "
+    sed -e '/^#/d' $tmp.config \
+    | while read file nbytes owner group perms ea_name ea_value namespace
+    do
+	if [ $nbytes = "d" ]; then
+	    # create a directory
+	    dir=$file
+	    if [ ! -d $dir ]
+	    then
+		if mkdir $dir
+		then
+		    :
+		else
+		    $verbose && echo
+		    echo "Error: cannot mkdir \"$dir\""
+		    exit 1
+		fi
+	    fi
+	else
+	    # create a directory/file
+	    dir=`dirname $file`
+	    if [ "$dir" != "." ]
+	    then
+		if [ ! -d $dir ]
+		then
+		    if mkdir $dir
+		    then
+			:
+		    else
+			$verbose && echo
+			echo "Error: cannot mkdir \"$dir\""
+			exit 1
+		    fi
+		fi
+	    fi
+	    rm -f $file
+	    if $here/src/fill $file $file $nbytes
+	    then
+		:
+	    else
+		$verbose && echo
+		echo "Error: cannot create \"$file\""
+		exit 1
+	    fi
+	fi
+	if [ -n "$owner" -a -n "$group" ]; then
+	    chown $owner.$group $file
+	fi
+	if [ -n "$perms" ]; then
+	    chmod $perms $file
+	fi
+
+	# extended attributes (EA)
+	if [ -n "$ea_name" -a -n "$ea_value" ]; then
+	    if [ "X$namespace" = "Xroot" ]; then
+		attr -R -s $ea_name -V $ea_value $file
+	    else
+		attr -s $ea_name -V $ea_value $file
+	    fi
+	# extended file attribute flags - no value - NOT EAs
+	elif [ -n "$ea_name" -a -z "$ea_value" ]; then
+	    # set the flag
+	    # TODO XXX
+            # use xfs_io to send the ioctl
+	    :
+	fi
+	$verbose && echo -n "."
+    done
+    $verbose && echo
+
+    cd $here
+}
+
+_mk_fillconfig_multi()
+{
+    _mk_fillconfig1
+    cat <<End-of-File >>$tmp.config
+# pathname	size in bytes
+#
+large000	8874368	$nobody	$nobody
+large111	2582912	$nobody	$nobody
+large222	7825792	$nobody	$nobody
+End-of-File
+}
+
+_create_dumpdir_largefile()
+{
+    _wipe_fs
+    mkdir -p $dump_dir || _fail "cannot mkdir \"$dump_dir\""
+    _largesize=4294967297
+    _largefile=$dump_dir/largefile
+    echo "dd a largefile at offset $_largesize"
+    POSIXLY_CORRECT=yes \
+    dd if=/dev/zero of=$_largefile bs=1 seek=$_largesize count=10 2>&1
+    _stable_fs
+}
+
+_create_dumpdir_fill()
+{
+    _wipe_fs
+    _mk_fillconfig1
+    _do_create_dumpdir_fill
+    _stable_fs
+}
+
+_create_dumpdir_fill2()
+{
+    _wipe_fs
+    _mk_fillconfig2
+    _do_create_dumpdir_fill
+    _stable_fs
+}
+
+_create_dumpdir_fill_perm()
+{
+    _wipe_fs
+    _mk_fillconfig_perm
+    _do_create_dumpdir_fill
+    _stable_fs
+}
+
+_create_dumpdir_fill_ea()
+{
+    _wipe_fs
+    _mk_fillconfig_ea
+    _do_create_dumpdir_fill
+    _stable_fs
+}
+
+#
+# Create enough files, and a few large enough files, so that
+# some files are likely to be split across streams.
+#
+_create_dumpdir_fill_multi()
+{
+    _wipe_fs
+    _mk_fillconfig_multi
+    _do_create_dumpdir_fill
+    _stable_fs
+}
+
+#
+# Append a subset of the fill'ed files
+# So we can see if just these get dumped on an incremental
+#
+_append_dumpdir_fill()
+{
+    cd $dump_dir
+    cat <<End-of-File >$tmp.config
+# pathname
+#
+small
+sub/big
+#
+sub/a
+sub/c
+sub/e
+End-of-File
+    sed -e '/^#/d' $tmp.config \
+    | while read file
+    do
+        echo 'Extra text' >>$file
+    done
+
+    cd $here
+    _stable_fs
+}
+
+_do_create_dump_symlinks()
+{
+    echo "Creating directory system of symlinks to dump."
+
+    mkdir -p $dump_dir || _fail "cannot mkdir \"$dump_dir\""
+    cd $dump_dir
+
+    $verbose && echo -n "Setup "
+    sed -e '/^#/d' $tmp.config \
+    | while read file nbytes owner group owner2 group2 perms perms2
+    do
+	dir=`dirname $file`
+	if [ "$dir" != "." ]
+	then
+	    if [ ! -d $dir ]
+	    then
+		if mkdir $dir
+		then
+		    :
+		else
+		    $verbose && echo
+		    echo "Error: cannot mkdir \"$dir\""
+		    exit 1
+		fi
+	    fi
+	fi
+	rm -f $file
+	touch $file
+
+	# Do chmod on symlink using umask.
+	# This won't do the right thing as it subtracts permissions.
+	# However, I don't care, as long as I get some different perms
+	# for testing.
+	if [ -n "$perms2" ]; then
+	    omask=`umask`
+	    umask $perms2
+	fi
+	ln -s $file $file-link
+	if [ -n "$perms2" ]; then
+	    umask $omask
+	fi
+
+	if [ -n "$owner" -a -n "$group" ]; then
+	    chown $owner.$group $file
+	fi
+	if [ -n "$owner" -a -n "$group" ]; then
+	    chown -h $owner.$group $file-link
+	fi
+	if [ -n "$perms" ]; then
+	    chmod $perms $file
+	fi
+	$verbose && echo -n "."
+    done
+    $verbose && echo
+
+    cd $here
+}
+
+_mk_symlink_config()
+{
+    cat <<End-of-File >$tmp.config
+# path	size	owner1	group1	owner2	group2	perm1	perm2
+#
+a	0	$nobody	$nobody	daemon	sys	124	421
+b	0	daemon	sys	bin	bin	347	743
+sub/a	0	bin	bin	$nobody	sys	777	777
+sub/b	0	$nobody	sys	$nobody	$nobody	367	763
+End-of-File
+}
+
+_create_dumpdir_symlinks()
+{
+    _wipe_fs
+    _mk_symlink_config
+    _do_create_dump_symlinks
+    _stable_fs
+}
+
+#
+# create hardlinks of form $_fname, $_fname_h1 $_fname_h2 ...
+#
+_create_hardlinks()
+{
+    _fname=$1
+    _numlinks=$2
+
+    touch $_fname
+    _j=1
+    while [ $_j -le $_numlinks ]; do
+        _suffix=_h$_j
+	_hardlink=$_fname$_suffix
+	echo "creating hardlink $_hardlink to $_fname"
+	ln $_fname $_hardlink
+	let _j=$_j+1
+    done
+}
+
+#
+# create a set of hardlinks
+# create hardlinks of form file1, file1_h1 file1_h2 ...
+# create hardlinks of form file2, file2_h1 file2_h2 ...
+# create hardlinks of form file3, file3_h1 file3_h2 ...
+#
+_create_hardset()
+{
+    _numsets=$1
+    _i=1
+    while [ $_i -le $_numsets ]; do
+	_create_hardlinks file$_i 5
+	let _i=$_i+1
+    done
+}
+
+
+_modify_level()
+{
+    _level=$1
+    echo "mod level $_level" >$dump_dir/file$_level
+}
+
+_create_dumpdir_hardlinks()
+{
+    _numsets=$1
+    _wipe_fs
+    echo "Creating directory system of hardlinks to incrementally dump."
+
+    mkdir -p $dump_dir || _fail "cannot mkdir \"$dump_dir\""
+    cd $dump_dir
+
+    _create_hardset $_numsets
+
+    cd $here
+    _stable_fs
+}
+
+#
+# Filter for ls
+# Filter out times and dates on symlinks and char devices.
+# Filter out size on directories because this can differ
+# when transitioning to long inode numbers (ie. 64 bits).
+#
+_ls_filter()
+{
+  $AWK_PROG '
+        /^l/ { date = $8; time = $7; sub(date,"DATE"); sub(time,"TIME"); print}
+        /^c/ { date = $9; time = $7; sub(date,"DATE"); sub(time,"TIME"); print}
+        /^d/ { size = $5; sub(size,"SIZE"); print}
+        {print}' \
+  | sed -e 's/total [0-9][0-9]*/total TOTAL/'
+}
+
+#
+# Filtering of Irix character hwgraph device names
+# e.g.
+# chardev: /hw/node/xtalk/15/pci/0/scsi_ctlr/0/target/1/lun/0/disk/partition/4/char
+# blkdev:  /dev/dsk/dks0d1s4
+#
+_filter_devchar()
+{
+    $AWK_PROG '
+	/\/hw\/node/ {
+	    sub(/\/hw.*scsi_ctlr\//,"/dev/dsk/dks")  # blah blah /dev/dsk/dks0/target/1/....
+	    sub(/\/target\//,"d")                    # blah blah /dev/dsk/dks0d1/lun/0/disk.....
+	    sub(/\/lun.*partition\//,"s")            # blah blah /dev/dsk/dks0d1s4/char
+	    sub(/\/char/,"")			     # blah blah /dev/dsk/dks0d1s4
+	}
+	{ print }
+    '
+}
+
+
+#
+# Filter out the non-deterministic dump msgs from
+# xfsdump and xfsrestore
+#
+_dump_filter_main()
+{
+  _filter_devchar |\
+  sed \
+      -e "s#$__XFSDUMP_PROG#xfsdump#"			\
+      -e "s#$XFSRESTORE_PROG#xfsrestore#"		\
+      -e "s#$XFSINVUTIL_PROG#xfsinvutil#"		\
+      -e "s/`hostname`/HOSTNAME/"			\
+      -e "s#$SCRATCH_DEV#SCRATCH_DEV#"			\
+      -e "s#$SCRATCH_RAWDEV#SCRATCH_DEV#"		\
+      -e "s#$dumptape#TAPE_DEV#"			\
+      -e "s#$SCRATCH_MNT#SCRATCH_MNT#"			\
+      -e "s#$dump_file#DUMP_FILE#"			\
+      -e 's#/var/lib/xfsdump#/var/xfsdump#'		\
+      -e 's/session id:[ 	]*[0-9a-f-]*/session id: ID/'  \
+      -e '/filesystem id:[ 	]*[0-9a-f-]*/d'		\
+      -e 's/time:[ 	].*/time: TIME/'		\
+      -e 's/date:[ 	].*/date: DATE/'		\
+      -e 's/dump begun .*/dump begun DATE/'		\
+      -e 's/previously begun .*/previously begun DATE/'	\
+      -e 's/[0-9][0-9]* seconds/SECS seconds/'		\
+      -e 's/restore.[0-9][0-9]*/restore.PID/'		\
+      -e 's/ino [0-9][0-9]*/ino INO/g'			\
+      -e '/stream [0-9]:/s/offset [0-9][0-9]*/offset NUM/g'	\
+      -e '/: dump size/s/[0-9][0-9]*/NUM/'		\
+      -e '/dump size:/s/[0-9][0-9]*/NUM/'		\
+      -e '/dump size per stream:/s/[0-9][0-9]*/NUM/'	\
+      -e 's/\(media file size[	 ]*\)[0-9][0-9]*/\1NUM/' \
+      -e 's/\(mfile size:[	 ]*\)[0-9][0-9]*/\1NUM/' \
+      -e '/drive[	 ]*[0-9][0-9]*:/d'		\
+      -e '/\/dev\/tty/d'				\
+      -e '/inventory session uuid/d'			\
+      -e '/ - Running single-threaded/d'		\
+      -e '/Mount point match/d'				\
+      -e '/^.*I\/O metrics: .*$/d'			\
+      -e 's/1048576/BLOCKSZ/'				\
+      -e 's/2097152/BLOCKSZ/'				\
+      -e 's/(pid[	 ]*[1-9][0-9]*)/\(pid PID\)/'	\
+      -e '/version [3-9]\.[0-9]/d'			\
+      -e 's/\/hw\/module.*$/SCRATCH_DEV/'		\
+      -e 's/xfsdump: ino map phase 1: .*/xfsdump: ino map <PHASES>/' \
+      -e '/xfsdump: ino map phase [2]/,1d'		\
+      -e '/xfsdump: ino map phase [3]/,1d'		\
+      -e '/xfsdump: ino map phase [4]/,1d'		\
+      -e '/xfsdump: ino map phase [5]/,1d'		\
+      -e 's/id:[[:space:]]*[0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}/ID: ID/'						\
+      -e 's/\[y\/n\][- ]----------------------*/\[y\/n\]/'		\
+      -e '/skip attribute set/d'				\
+  | perl -ne '
+	# filter out all the output between the lines "Dump Summary:"
+	# and "Dump Status:"
+	if ($_ =~ /(?:Dump|Restore) Summary/) {
+		$skip = 1;
+	} elsif ($_ =~ /(?:Dump|Restore) Status/) {
+		$skip = 0;
+	}
+	print if (! $skip);' \
+  | perl -ne '
+	# correct the file count if large scratch devices are being used
+	$skip = 0;
+	if ($_ =~ /(\S+) directories and (\S+) entries/) {
+		$foo = $2;
+		if ($ENV{'LARGE_SCRATCH_DEV'} && $foo > 0) {
+			$foo -= 1;
+		}
+		printf("xfsrestore: %u directories and %u entries processed\n",
+						$1, $foo);
+		$skip = 1;
+	}
+	print if (! $skip);'
+}
+
+_dump_filter()
+{
+   if $do_quota_check
+   then
+       _dump_filter_main | _check_quota_dumprestore | _check_quota_entries
+   else
+       _dump_filter_main
+   fi
+}
+
+_invutil_filter()
+{
+  _dump_filter_main \
+  | sed \
+	-e 's/UUID[ 	]*:[ 	][0-9a-f-]*/UUID		:	ID/' \
+	-e 's/TIME OF DUMP[ 	]*:.*/TIME OF DUMP	:	TIME/' \
+        -e 's/HOSTNAME:SCRATCH_MNT.*/HOSTNAME:SCRATCH_MNT/' \
+        -e 's#inventory/[0-9a-f-]*#inventory/UUID#' \
+
+}
+
+
+_dir_filter()
+{
+  sed \
+    -e "s#$dump_file#DUMP_FILE#g"      \
+    -e "s#$SCRATCH_DEV#SCRATCH_DEV#"        \
+    -e "s#$SCRATCH_RAWDEV#SCRATCH_DEV#"    \
+    -e "s#$dumptape#TAPE_DEV#"         \
+    -e "s#$dump_dir#DUMP_DIR#g"       \
+    -e "s#$restore_dir#RESTORE_DIR#g" \
+    -e "s#$SCRATCH_MNT#SCRATCH_MNT#g"       \
+    -e "s#$dump_sdir#DUMP_SUBDIR#g"   \
+    -e "s#$restore_sdir#RESTORE_SUBDIR#g" \
+    -e "s#$$#PID#g" \
+    -e "/Only in SCRATCH_MNT: .use_space/d" \
+    -e "s#$RESULT_DIR/##g" \
+
+}
+
+#
+# Parse xfsdump arguments.
+# Note: requires a space between option letter and argument
+#
+_parse_dump_args()
+{
+    OPTIND=0
+    dump_args=""
+    while [ $# -gt 0 ]
+    do
+        case $1
+        in
+        -f)
+            [ -z "$2" ] && _fail "missing argument for -f"
+	    dumptape=$2
+	    dump_file=$2
+	    shift
+            ;;
+        -L)
+            [ -z "$2" ] && _fail "missing argument for -L"
+	    session_label=$2
+	    shift
+            ;;
+	--multi)
+            [ -z "$2" ] && _fail "missing argument for --multi"
+	    multi=$2
+	    shift
+	    ;;
+        --check-quota)
+            do_quota_check=true
+            ;;
+        --no-check-quota)
+            do_quota_check=false
+            ;;
+	-o|-D|-F|-K)
+	    dump_args="$dump_args $1"
+            ;;
+        -l|-d)
+            [ -z "$2" ] && _fail "missing argument for $1"
+	    dump_args="$dump_args $1$2"
+	    shift
+            ;;
+	*)
+            _fail "invalid argument to common/dump function: $1"
+            ;;
+        esac
+	shift
+    done
+}
+
+#
+# Parse xfsrestore arguments.
+# Note: requires a space between option letter and argument
+#
+_parse_restore_args()
+{
+    OPTIND=0
+    restore_args=""
+    while [ $# -gt 0 ]
+    do
+        case $1
+        in
+        -f)
+            [ -z "$2" ] && _fail "missing argument for -f"
+	    dumptape=$2
+	    dump_file=$2
+	    shift
+            ;;
+        -L)
+            [ -z "$2" ] && _fail "missing argument for -L"
+	    session_label=$2
+	    shift
+            ;;
+	--multi)
+            [ -z "$2" ] && _fail "missing argument for --multi"
+	    multi=$2
+	    shift
+	    ;;
+        --check-quota)
+            do_quota_check=true
+            ;;
+        --no-check-quota)
+            do_quota_check=false
+            ;;
+	-K|-R)
+	    restore_args="$restore_args $1"
+            ;;
+	*)
+            _fail "invalid argument to common/dump function: $1"
+            ;;
+        esac
+	shift
+    done
+}
+
+
+#
+# Dump a subdir
+#
+_do_dump_sub()
+{
+    _parse_dump_args $*
+
+    echo "Dumping to tape..."
+    opts="$_dump_debug$dump_args -s $dump_sdir -f $dumptape -M $media_label -L $session_label $SCRATCH_MNT"
+    echo "xfsdump $opts" | _dir_filter
+    $XFSDUMP_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Do dump to tape
+#
+_do_dump()
+{
+    _parse_dump_args $*
+
+    echo "Dumping to tape..."
+    opts="$_dump_debug$dump_args -f $dumptape -M $media_label -L $session_label $SCRATCH_MNT"
+    echo "xfsdump $opts" | _dir_filter
+    $XFSDUMP_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+
+#
+# Do full dump with -m
+#
+_do_dump_min()
+{
+    _parse_dump_args $*
+
+    echo "Dumping to tape..."
+    onemeg=1048576
+    opts="$_dump_debug$dump_args -m -b $onemeg -l0 -f $dumptape -M $media_label -L $session_label $SCRATCH_MNT"
+    echo "xfsdump $opts" | _dir_filter
+    $XFSDUMP_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+
+#
+# Do full dump to file
+#
+_do_dump_file()
+{
+    _parse_dump_args $*
+
+    echo "Dumping to file..."
+    opts="$_dump_debug$dump_args -f $dump_file -M $media_label -L $session_label $SCRATCH_MNT"
+    echo "xfsdump $opts" | _dir_filter
+    $XFSDUMP_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Do full dump to multiple files
+#
+_do_dump_multi_file()
+{
+    _parse_dump_args $*
+
+    multi_args=""
+
+    i=0
+    while [ $i -lt $multi ]
+    do
+	multi_args="$multi_args -f $dump_file.$i -M $media_label.$i"
+	let i=$i+1
+    done
+
+    echo "Dumping to files..."
+    opts="$_dump_debug$dump_args $multi_args -L $session_label $SCRATCH_MNT"
+    echo "xfsdump $opts" | _dir_filter
+    $XFSDUMP_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+
+_prepare_restore_dir()
+{
+    rm -rf $restore_dir
+    mkdir $restore_dir || _fail "failed to mkdir $restore_dir"
+}
+
+
+#
+# Get tape ready and restore dir
+#
+_prepare_restore()
+{
+    _prepare_restore_dir
+
+    echo "Rewinding tape"
+    _rewind
+}
+
+#
+# Restore the tape into $restore_dir
+#
+_do_restore()
+{
+    _parse_restore_args $*
+    _prepare_restore
+
+    echo "Restoring from tape..."
+    opts="$_restore_debug$restore_args -f $dumptape  -L $session_label $restore_dir"
+    echo "xfsrestore $opts" | _dir_filter
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Restore the tape into $restore_dir using -m
+#
+_do_restore_min()
+{
+    _parse_restore_args $*
+    _prepare_restore
+
+    echo "Restoring from tape..."
+    onemeg=1048576
+    opts="$_restore_debug$restore_args -m -b $onemeg -f $dumptape  -L $session_label $restore_dir"
+    echo "xfsrestore $opts" | _dir_filter
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Restore the tape from a dump file
+#
+_do_restore_file()
+{
+    _parse_restore_args $*
+    _prepare_restore_dir
+
+    echo "Restoring from file..."
+    opts="$_restore_debug$restore_args -f $dump_file  -L $session_label $restore_dir"
+    echo "xfsrestore $opts" | _dir_filter
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Cumulative restore from a file
+# Must call _prepare_restore_dir before the first
+# (and only the first) call to this function.
+#
+_do_restore_file_cum()
+{
+    _parse_restore_args $*
+
+    echo "Restoring cumumlative from file..."
+    opts="$_restore_debug$restore_args -f $dump_file -r $restore_dir"
+    echo "xfsrestore $opts" | _dir_filter
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+_do_restore_toc()
+{
+    _parse_restore_args $*
+
+    echo "Contents of dump ..."
+    opts="$_restore_debug$restore_args -f $dump_file -t"
+    echo "xfsrestore $opts" | _dir_filter
+    cd $SCRATCH_MNT # for IRIX which needs xfs cwd
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter_main |\
+    _check_quota_file |\
+    _check_quota_entries |\
+    $AWK_PROG 'NF != 1 { print; next }
+	       {files = sprintf("%s\n%s", files, $1)}
+		END { print files | "sort" } '
+    # the above awk code is to alpha sort only the output
+    # of files (and not the verbose restore msgs)
+    cd $here # put back
+}
+
+#
+# Restore the tape from multiple dump files
+#
+_do_restore_multi_file()
+{
+    _parse_restore_args $*
+    _prepare_restore_dir
+
+    multi_args=""
+
+    i=0
+    while [ $i -lt $multi ]
+    do
+	multi_args="$multi_args -f $dump_file.$i"
+	let i=$i+1
+    done
+
+    echo "Restoring from file..."
+    opts="$_restore_debug$restore_args $multi_args -L $session_label $restore_dir"
+    echo "xfsrestore $opts" | _dir_filter
+    $XFSRESTORE_PROG $opts 2>&1 | tee -a $seqres.full | _dump_filter
+}
+
+#
+# Do xfsdump piped into xfsrestore - xfsdump | xfsrestore
+# Pass dump options in $1 and restore options in $2, if required. e.g.:
+#     _do_dump_restore "-o -F" "-R"
+#     _do_dump_restore "" "-R"
+#
+# Use -s as we want to dump and restore to the same xfs partition
+#
+_do_dump_restore()
+{
+    _parse_dump_args $1
+    _parse_restore_args $2
+    _prepare_restore_dir
+    echo "xfsdump|xfsrestore ..."
+    restore_opts="$_restore_debug$restore_args - $restore_dir"
+    dump_opts="$_dump_debug$dump_args -s $dump_sdir - $SCRATCH_MNT"
+    echo "xfsdump $dump_opts | xfsrestore $restore_opts" | _dir_filter
+    $XFSDUMP_PROG $dump_opts 2>$tmp.dump.mlog | $XFSRESTORE_PROG $restore_opts 2>&1 | tee -a $seqres.full | _dump_filter
+    _dump_filter <$tmp.dump.mlog
+}
+
+#
+# Compare dumped subdirectory with restored dir
+# using ls -nR.
+# Thus no contents are compared but permissions, sizes,
+# owners, etc... are.
+#
+_ls_compare_sub()
+{
+    #
+    # verify we got back what we dumped
+    #
+    echo "Comparing listing of dump directory with restore directory"
+    ls -nR $dump_dir | tee -a $seqres.full | _ls_filter >$tmp.dump_dir
+    ls -nR $restore_dir/$dump_sdir | tee -a $seqres.full | _ls_filter \
+    | sed -e "s#$restore_sdir\/##" >$tmp.restore_dir
+
+    diff -bcs $tmp.dump_dir $tmp.restore_dir | sed -e "s#$tmp#TMP#g"
+}
+
+#
+# filter out the date fields
+#
+_ls_nodate_filter()
+{
+    $AWK_PROG 'NF == 9 { print $1, $2, $3, $4, $9 }'
+}
+
+#
+# _ls_compare_sub but don't compare dates
+_ls_nodate_compare_sub()
+{
+    #
+    # verify we got back what we dumped
+    #
+    echo "Comparing listing of dump directory with restore directory"
+    ls -nR $dump_dir | tee -a $seqres.full | _ls_filter | _ls_nodate_filter >$tmp.dump_dir
+    ls -nR $restore_dir/$dump_sdir | tee -a $seqres.full | _ls_filter \
+    | _ls_nodate_filter | sed -e "s#$restore_sdir\/##" >$tmp.restore_dir
+
+    diff -bcs $tmp.dump_dir $tmp.restore_dir | sed -e "s#$tmp#TMP#g"
+}
+
+#
+# Compare using recursive diff the files of the dumped
+# subdirectory.
+# This one will compare the contents.
+#
+_diff_compare_sub()
+{
+    echo "Comparing dump directory with restore directory"
+    diff -rs $dump_dir $restore_dir/$dump_sdir | _dir_filter
+}
+
+_get_eas_on_path()
+{
+    _path=$1
+
+# Tim - this is the IRIX way...
+    # find $_path -exec attr -l {} \; |\
+    # awk '{print $9, $2}' |\
+    # sed 's/["]//g' |\
+    # sort |\
+# and this is now the Linux way...
+    echo "User names"
+    getfattr --absolute-names -Rh -m user $_path |\
+    perl -wn -e '
+	if (m/^# file: (\S+)/) { $file = $1 }
+	elsif (m/^user\.(\w+)/) { print $file, " ",$1,"\n" }' |\
+    sort |\
+    while read file ea_name; do
+	attr -g $ea_name $file
+    done
+
+    if [ "$USE_ATTR_SECURE" = yes ]; then
+	echo "Security names"
+	getfattr --absolute-names -Rh -m security $_path |\
+	perl -wn -e '
+	    if (m/^# file: (\S+)/) { $file = $1 }
+	    elsif (m/^security\.(\w+)/) { print $file, " ",$1,"\n" }' |\
+	sort |\
+	while read file ea_name; do
+	    attr -g $ea_name $file
+	done
+    fi
+
+    echo "Root names"
+    getfattr --absolute-names -Rh -m trusted $_path |\
+    perl -wn -e '
+	if (m/^# file: (\S+)/) { $file = $1 }
+	elsif (m/^trusted\.(\w+)/) { print $file, " ",$1,"\n" }' |\
+    sort |\
+    while read file ea_name; do
+	attr -R -g $ea_name $file
+    done
+}
+
+#
+# Compare the extended attributes of the files/dirs
+# b/w the dumped and restore dirs.
+#
+#
+# Attribute "attr5" had a 8 byte value for /spare1/dump.5460/dir:
+# Attribute "attr5" had a 8 byte value for /spare1/restore.5460/dump.5460/dir:
+#
+_diff_compare_eas()
+{
+    echo "Comparing dump directory with restore directory"
+    echo "Looking at the extended attributes (EAs)"
+    echo "EAs on dump"
+    _get_eas_on_path $dump_dir | tee $seqres.ea1 | _dir_filter
+    echo "EAs on restore"
+    _get_eas_on_path $restore_dir/$dump_sdir \
+    | sed -e "s#$restore_sdir\/##" \
+    | tee $seqres.ea2 \
+    | _dir_filter
+    diff -s $seqres.ea1 $seqres.ea2 | _dir_filter
+}
+
+
+#
+# Compare using recursive diff the files of the dumped
+# filesystem
+#
+_diff_compare()
+{
+    echo "Comparing dump directory with restore directory"
+    diff -rs $SCRATCH_MNT $restore_dir | _dir_filter | _check_quota_diff
+}
+
+#
+# Check out the dump inventory
+#
+_dump_inventory()
+{
+    $XFSDUMP_PROG $_dump_debug -I | tee -a $seqres.full | _dump_filter_main
+}
+
+#
+# Do the xfsinvutil cmd with debug and filters
+# Need to set variable: "$middate" to the invutil date
+#
+_do_invutil()
+{
+    host=`hostname`
+    echo "xfsinvutil $_invutil_debug -M $host:$SCRATCH_MNT \"$middate\" $*" >$seqres.full
+    $XFSINVUTIL_PROG $_invutil_debug $* -M $host:$SCRATCH_MNT "$middate" \
+    | tee -a $seqres.full | _invutil_filter
+}
+
+#
+# ensure we can find the user quota msg if user quotas are on
+# ensure we can find the group quota msg if group quotas are on
+#
+_check_quota()
+{
+    usermsg=$1
+    groupmsg=$2
+    projectmsg=$3
+    uquota=0
+    gquota=0
+    pquota=0
+    $here/src/feature -U $SCRATCH_DEV && uquota=1
+    $here/src/feature -G $SCRATCH_DEV && gquota=1
+    $here/src/feature -P $SCRATCH_DEV && pquota=1
+
+    $AWK_PROG -v uquota=$uquota -v gquota=$gquota -v pquota=$pquota \
+	      -v full=$seqres.full -v usermsg="$usermsg" \
+	      -v groupmsg="$groupmsg" -v projectmsg="$projectmsg" '
+	$0 ~ projectmsg {
+			print "Found project quota:", $0 >>full
+			found_pquota = 1
+			if (!pquota) {
+			    print "Found extra:", $0
+			}
+			next
+	}
+	$0 ~ groupmsg {
+			print "Found group quota:", $0 >>full
+			found_gquota = 1
+			if (!gquota) {
+			    print "Found extra:", $0
+			}
+			next
+	}
+	$0 ~ usermsg {
+			print "Found user quota:", $0 >>full
+			found_uquota = 1
+			if (!uquota) {
+			    print "Found extra:", $0
+			}
+			next
+	}
+			{ print }
+	END {
+		if (uquota && !found_uquota) {
+		    print "Missing user quota msg:", usermsg
+		}
+		if (gquota && !found_gquota) {
+		    print "Missing group quota msg:", groupmsg
+		}
+		if (pquota && !found_pquota) {
+		    print "Missing project quota msg:", projectmsg
+		}
+	}
+    '
+}
+
+#
+# xfsrestore: 3 directories and 40 entries processed
+#   $5 = 40
+#   num entries needs to be reduced by num quota file(s)
+#
+_check_quota_entries()
+{
+    uquota=0
+    gquota=0
+    pquota=0
+    $here/src/feature -U $SCRATCH_DEV && uquota=1
+    $here/src/feature -G $SCRATCH_DEV && gquota=1
+    $here/src/feature -P $SCRATCH_DEV && pquota=1
+    $AWK_PROG -v uquota=$uquota -v gquota=$gquota -v pquota=$pquota '
+	/entries processed/ {
+		if (uquota) $5--
+		if (gquota) $5--
+		if (pquota) $5--
+	}
+	{print}'
+}
+
+#
+# Look for:
+# xfsdump: saving user quota information for: SCRATCH_MNT
+# xfsdump: saving group quota information for: SCRATCH_MNT
+# xfsdump: saving project quota information for: SCRATCH_MNT
+# xfsrestore: user quota information written to ...'
+# xfsrestore: group quota information written to ...'
+# xfsrestore: project quota information written to ...'
+#
+# If on IRIX then look for:
+# xfsrestore: use 'edquota' to restore quotas
+# Else look for:
+# xfsrestore: use 'xfs_quota' to restore quotas
+#
+_check_quota_dumprestore()
+{
+    if [ "$HOSTOS" == "IRIX" ]; then
+	_check_quota 'user quota information' \
+		     'group quota information' \
+		     'project quota information' | \
+	sed "/xfsrestore:.*use 'edquota' to restore quotas/d"
+    else
+	_check_quota 'user quota information' \
+		     'group quota information' \
+		     'project quota information' | \
+	sed "/xfsrestore:.*use 'xfs_quota' to restore quotas/d"
+    fi
+}
+
+#
+# Look for:
+# Only in RESTORE_DIR: xfsdump_quotas
+# Only in RESTORE_DIR: xfsdump_quotas_group
+# Only in RESTORE_DIR: xfsdump_quotas_project
+#
+_check_quota_diff()
+{
+   _check_quota 'Only in RESTORE_DIR: xfsdump_quotas' \
+	'Only in RESTORE_DIR: xfsdump_quotas_group' \
+	'Only in RESTORE_DIR: xfsdump_quotas_proj'
+}
+
+#
+# Look for the quota file in the output
+# Ensure that it is there if it should be
+# Filter it out so that the output is always the same
+# even with no quotas
+#
+_check_quota_file()
+{
+   _check_quota 'xfsdump_quotas' 'xfsdump_quotas_group' 'xfsdump_quotas_proj'
+}
+
+
+# make sure this script returns success
+/bin/true

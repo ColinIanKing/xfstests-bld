@@ -1,0 +1,229 @@
+##/bin/bash
+#
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# Core of filestreams tests.
+#
+
+_check_filestreams_support()
+{
+	local irix_timeout_sysvar="xfs_mfstream_timeout"
+	local linux_timeout_procvar="/proc/sys/fs/xfs/filestream_centisecs"
+	local streams_avail=""
+	if [ "$HOSTOS" == "IRIX" ]; then
+		# check for the filestreams timeout systune variable in irix
+		streams_avail=`systune $irix_timeout_sysvar 2>&1 |
+			perl -ne 'if (/'$irix_timeout_sysvar'\s+=\s+\d+/) {print "true"}'`
+	else
+		# check for the filestreams timeout proc entry in linux
+		[ -f $linux_timeout_procvar ] && streams_avail="true"
+	fi
+
+	if [ "$streams_avail" == "true" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+_set_stream_timeout_centisecs()
+{
+	local new_timeout_csecs=$1
+	local irix_timeout_sysvar="xfs_mfstream_timeout"
+	local linux_timeout_procvar="/proc/sys/fs/xfs/filestream_centisecs"
+	if [ "$HOSTOS" == "IRIX" ]; then
+		echo y | systune -r $irix_timeout_sysvar $new_timeout_csecs >/dev/null
+	else
+		echo $new_timeout_csecs > $linux_timeout_procvar
+	fi
+}
+
+_do_stream()
+{
+	local directory_name=$1
+	local files=$2
+	local file_size=$3
+	local bsize=$4
+	local iflag=$5
+	local dio=$6
+	local blocks_in_file=`expr $file_size / $bsize`
+
+	mkdir $directory_name
+	if [ "$iflag" = "1" -a "$HOSTOS" != "IRIX" ]; then
+		$XFS_IO_PROG -x -c "chattr +S" $directory_name \
+			|| _fail "chattr of filestream flag"
+	fi
+	cd $directory_name
+
+	local dd_cmd=""
+	if [ "$HOSTOS" == "IRIX" ]; then
+		# for irix use lmdd
+		dd_cmd="lmdd"
+		[ "$dio" = "1" ] && dd_cmd="$dd_cmd odirect=1"
+	else
+		# for linux use dd
+		dd_cmd="dd"
+		[ "$dio" = "1" ] && dd_cmd="$dd_cmd oflag=direct"
+	fi
+	dd_cmd="$dd_cmd if=/dev/zero bs=${bsize} count=${blocks_in_file}"
+
+	local i=1
+	while [ $i -le $files ]; do
+		$dd_cmd of=frame-${i} 2>&1 | grep -v records | grep -v secs
+		i=`expr $i + 1`
+	done
+}
+
+_filter_agno()
+{
+        # the ag number is in column 4 of xfs_bmap output
+        perl -ne '
+                $ag = (split /\s+/)[4] ;
+		if ($ag =~ /\d+/) {print "$ag "} ;
+        '
+}
+
+_get_stream_ags()
+{
+        local directory_name=$1
+        local stream_ags=`xfs_bmap -vp ${directory_name}/* | _filter_agno`
+        echo $stream_ags
+}
+
+_check_for_dupes()
+{
+        # check for duplicate numbers between two space seperated vars
+        local num_str_one=$1
+        local num_str_two=$2
+
+        local this_num_one
+        local this_num_two
+        for this_num_one in $num_str_one; do
+                for this_num_two in $num_str_two; do
+                        if [ "$this_num_one" == "$this_num_two" ]; then
+				echo "duplicate AG $this_num_one found" \
+					>> $seqres.full
+				return 1
+			fi
+                done
+        done
+        return 0
+}
+
+_test_streams() {
+
+	echo "# testing $* ...."
+	local agcount="$1"
+	local agsize="$2" # in MB
+	local stream_count="$3"
+	local stream_files="$4"
+	local stream_file_size=`expr $5 \* 1024 \* 1024`
+	local use_iflag="$6"
+	local use_directio="$7"
+	local expected_result="$8"	# "fail" if failure is expected
+
+	local size=`expr $agsize \* 1024 \* 1024 \* $agcount`
+	_scratch_mkfs_xfs -dsize=$size,agcount=$agcount >/dev/null 2>&1 \
+		|| _fail "mkfs failed"
+
+	if [ "$use_iflag" = "0" -o "$HOSTOS" == "IRIX" ]; then
+		# mount using filestreams mount option
+		_scratch_mount "-o filestreams" \
+			|| _fail "filestreams mount failed"
+	else
+		# test will set inode flag
+		_scratch_mount || _fail "mount failed"
+	fi
+
+	cd $SCRATCH_MNT
+
+	# start $stream_count streams
+	# each stream writes ($stream_files x $stream_file_size)M
+	echo "# streaming"
+	local stream_pids=""
+	local stream_index=1
+	while [ $stream_index -le $stream_count ]; do
+		_do_stream stream${stream_index}-dir $stream_files \
+			$stream_file_size 1048576 $use_iflag $use_directio &
+		stream_pids="$stream_pids $!"
+		stream_index=`expr $stream_index + 1`
+	done
+
+	# wait for streams to finish
+	# XXX wait here not needed? -dgc
+	wait $stream_pids
+
+	# sync the buffered streams out in parallel
+	# _get_stream_ags does a xfs_bmap which syncs delayed allocations
+	echo "# sync AGs..."
+	local ag_sync_pids=""
+	stream_index=1
+	while [ $stream_index -le $stream_count ]; do
+		_get_stream_ags stream${stream_index}-dir > /dev/null 2>&1 &
+		ag_sync_pids="$ag_sync_pids $!"
+		stream_index=`expr $stream_index + 1`
+	done
+
+	# wait for syncs to finish
+	wait $ag_sync_pids
+
+	# confirm streams are in seperate AGs
+	echo "# checking stream AGs..."
+	local this_stream_ags=""
+	local ags_seen=""
+	local num_streams_with_matching_ags=0
+	stream_index=1
+	while [ $stream_index -le $stream_count ]; do
+		this_stream_ags=`_get_stream_ags stream${stream_index}-dir`
+		echo "stream $stream_index AGs: $this_stream_ags" >> $seqres.full
+		_check_for_dupes "$ags_seen" "$this_stream_ags"
+		if [ $? -ne 0 ]; then
+			# this stream is not in seperate AGs to previous streams
+			num_streams_with_matching_ags=`expr $num_streams_with_matching_ags + 1`
+		fi
+		ags_seen="$ags_seen $this_stream_ags"
+		stream_index=`expr $stream_index + 1`
+	done
+
+	_cleanup_streams_umount
+	if [ "$expected_result" != "fail" ]; then
+		if [ $num_streams_with_matching_ags -eq 0 ]; then
+			# all streams in seperate AGs, as expected
+			echo "+ passed, streams are in seperate AGs"
+		else
+			# streams with matching AGs, should be seperate
+			_fail "- failed, $num_streams_with_matching_ags streams with matching AGs"
+		fi
+	else
+		# expecting streams to have overlapped
+		if [ $num_streams_with_matching_ags -eq 0 ]; then
+			# all streams in seperate AGs, should have overlapped
+			_fail "- streams are in seperate AGs, expected _matching_"
+		else
+			# streams with matching AGs, as expected
+			echo "+ expected failure, matching AGs"
+		fi
+	fi
+	return 0
+}
+
+_cleanup_streams_umount()
+{
+	cd /
+	rm -rf ${SCRATCH_MNT}/stream*
+	_scratch_unmount 2>/dev/null
+}

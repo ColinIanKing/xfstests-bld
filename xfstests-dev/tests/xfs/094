@@ -1,0 +1,115 @@
+#! /bin/bash
+# FS QA Test No. 094
+#
+# Exercising the inheritable realtime inode bit.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2005 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+_require_realtime
+_require_scratch
+_require_command "$XFS_IO_PROG" xfs_io
+
+_filter_realtime_flag()
+{
+	_test_inode_flag realtime $SCRATCH_MNT/testdir/$1
+	if [ $? -eq 0 ]; then
+		echo "--r-- SCRATCH_MNT/testdir/$1"
+	else
+		echo "----- SCRATCH_MNT/testdir/$1"
+	fi
+}
+
+_filter_rtinherit_flag()
+{
+	_test_inode_flag rt-inherit $SCRATCH_MNT/testdir
+	if [ $? -eq 0 ]; then
+		echo "--t-- SCRATCH_MNT/testdir"
+	else
+		echo "----- SCRATCH_MNT/testdir"
+	fi
+}
+
+_create_scratch()
+{
+	echo "*** mkfs"
+	if ! _scratch_mkfs_xfs >$tmp.out 2>&1
+	then
+		cat $tmp.out
+		echo "failed to mkfs $SCRATCH_DEV"
+		exit 1
+	fi
+
+	echo "*** mount"
+	if ! _scratch_mount
+	then
+		echo "failed to mount $SCRATCH_DEV"
+		exit 1
+	fi
+}
+
+_create_scratch
+mkdir $SCRATCH_MNT/testdir
+
+# set inode attribute, create files below and check they're marked realtime
+# unset inode attribute, create files below and check they're not realtime
+
+echo "*** create directory with rtinherit"
+$XFS_IO_PROG -r -c 'chattr +t' $SCRATCH_MNT/testdir
+_filter_rtinherit_flag
+
+echo "*** create child with inherited realtime"
+touch $SCRATCH_MNT/testdir/real
+_filter_realtime_flag real
+
+echo "*** remove rtinherit from directory"
+$XFS_IO_PROG -r -c 'chattr -t' $SCRATCH_MNT/testdir
+_filter_rtinherit_flag
+
+echo "*** create child without inherited realtime"
+touch $SCRATCH_MNT/testdir/unreal
+_filter_realtime_flag unreal
+
+echo "*** done"
+
+# success, all done
+status=0
+exit

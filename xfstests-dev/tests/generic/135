@@ -1,0 +1,76 @@
+#! /bin/bash
+# FSQA Test No. 135
+#
+# Concurrent I/O to same file to ensure no deadlocks
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux IRIX
+
+_require_odirect
+_require_scratch
+_scratch_mkfs >/dev/null 2>&1
+_scratch_mount
+
+cd $SCRATCH_MNT
+
+# create file with async I/O
+$XFS_IO_PROG -f -c 'pwrite -b 4k -S 0x12 0 4k' async_file > /dev/null
+
+# create file with sync I/O
+$XFS_IO_PROG -f -s -c 'pwrite -b 4k -S 0x34 0 4k' sync_file > /dev/null
+
+# create file with direct I/O
+$XFS_IO_PROG -f -d -c 'pwrite -b 4k -S 0x56 0 4k' direct_file > /dev/null
+
+# create file, truncate and then dirty again
+$XFS_IO_PROG -f -c 'pwrite -b 4k -S 0x78 0 4k' trunc_file > /dev/null
+$XFS_IO_PROG -f -c 'truncate 2k' trunc_file > /dev/null
+$XFS_IO_PROG -c 'pwrite 1k 0 1k' trunc_file > /dev/null
+
+pushd / > /dev/null
+_scratch_cycle_mount
+popd > /dev/null
+
+# check file size and contents
+od -Ad -x async_file
+od -Ad -x sync_file
+od -Ad -x direct_file
+od -Ad -x trunc_file
+
+rm -f async_file sync_file direct_file trunc_file
+
+status=0
+exit 

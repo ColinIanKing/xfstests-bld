@@ -1,0 +1,72 @@
+#! /bin/bash
+# FS QA Test No. 080
+#
+# rwtest (iogen|doio)
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_cleanup()
+{ 
+    cd /
+    rm -f $tmp.*
+}
+
+_supported_fs xfs
+
+# Apparently should be able to work on IRIX,
+# but not at the moment.
+_supported_os Linux
+_require_test
+
+quiet=-q
+clean=-c
+
+export here
+cd $TEST_DIR
+echo
+
+# real QA test starts here
+
+# to get sh working like ksh on IRIX
+export _XPG=1
+
+$here/ltp/rwtest.sh $quiet $clean -i 2000 -f direct,buffered,sync
+status=$?
+[ $status -ne 0 ] && exit
+echo Completed rwtest pass 1 successfully.
+
+#$here/ltp/rwtest.sh $quiet $clean -Dv -i 1000 -n 10 -f direct,buffered,sync
+#[ $status -ne 0 ] && exit
+#echo Completed rwtest pass 2 successfully.
+
+exit

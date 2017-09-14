@@ -1,0 +1,97 @@
+#! /bin/bash
+# FS QA Test No. 275
+#
+# The posix write test.  When write size is larger than disk free size,
+# should write as much as possible until ENOSPC.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2011-2012 Fujitsu, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+#creator
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1    # failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+	cd /
+	_scratch_unmount
+}
+
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+_require_scratch
+
+echo "------------------------------"
+echo "write until ENOSPC test"
+echo "------------------------------"
+
+rm -f $seqres.full
+
+_scratch_unmount 2>/dev/null
+_scratch_mkfs_sized $((2 * 1024 * 1024 * 1024)) >>$seqres.full 2>&1
+_scratch_mount
+
+# this file will get removed to create 256k of free space after ENOSPC
+# conditions are created.
+dd if=/dev/zero of=$SCRATCH_MNT/tmp1 bs=256K count=1 >>$seqres.full 2>&1
+[ $? -ne 0 ] && _fail "Error creating file"
+
+# Attempt to completely fill fs
+dd if=/dev/zero of=$SCRATCH_MNT/tmp2 bs=1M >>$seqres.full 2>&1
+sync
+dd if=/dev/zero of=$SCRATCH_MNT/tmp3 bs=4K >>$seqres.full 2>&1
+sync
+# Last effort, use O_SYNC
+dd if=/dev/zero of=$SCRATCH_MNT/tmp4 bs=4K oflag=sync >>$seqres.full 2>&1
+# Save space usage info to the full file
+echo "Pre rm space:" >> $seqres.full
+$DF_PROG $SCRATCH_MNT >>$seqres.full 2>&1
+
+# Should leave approx 256k free
+rm -f $SCRATCH_MNT/tmp1
+sync
+echo "Post rm space:" >> $seqres.full
+$DF_PROG $SCRATCH_MNT >>$seqres.full 2>&1
+_freespace=`$DF_PROG -k $SCRATCH_MNT | tail -n 1 | awk '{print $5}'`
+[ $_freespace -gt 1024 ] && _fail "could not sufficiently fill filesystem"
+
+# Try to write more than available space in chunks that will allow at least one
+# full write to succeed.
+dd if=/dev/zero of=$SCRATCH_MNT/tmp1 bs=128k count=8 >>$seqres.full 2>&1
+echo "Bytes written until ENOSPC:" >>$seqres.full
+du $SCRATCH_MNT/tmp1 >>$seqres.full
+
+# And at least some of it should succeed.
+_filesize=`ls -l $SCRATCH_MNT/tmp1 | awk '{print $5}'`
+[ $_filesize -lt $((128 * 1024)) ] && \
+	_fail "Partial write until enospc failed; wrote $_filesize bytes."
+
+echo "done"
+status=0
+exit

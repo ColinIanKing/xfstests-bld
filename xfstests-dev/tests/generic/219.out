@@ -1,0 +1,37 @@
+QA output created by 219
+
+### test user accounting
+
+### create files, setting up ownership (type=u)
+  File: "SCRATCH_MNT/buffer"
+  Size: 0            Filetype: Regular File
+  File: "SCRATCH_MNT/direct"
+  Size: 0            Filetype: Regular File
+  File: "SCRATCH_MNT/mmap"
+  Size: 0            Filetype: Regular File
+### some controlled buffered, direct and mmapd IO (type=u)
+  File: "SCRATCH_MNT/buffer"
+  Size: 49152        Filetype: Regular File
+  File: "SCRATCH_MNT/direct"
+  Size: 49152        Filetype: Regular File
+  File: "SCRATCH_MNT/mmap"
+  Size: 49152        Filetype: Regular File
+Usage OK (type=u)
+
+### test group accounting
+
+### create files, setting up ownership (type=g)
+  File: "SCRATCH_MNT/buffer"
+  Size: 0            Filetype: Regular File
+  File: "SCRATCH_MNT/direct"
+  Size: 0            Filetype: Regular File
+  File: "SCRATCH_MNT/mmap"
+  Size: 0            Filetype: Regular File
+### some controlled buffered, direct and mmapd IO (type=g)
+  File: "SCRATCH_MNT/buffer"
+  Size: 49152        Filetype: Regular File
+  File: "SCRATCH_MNT/direct"
+  Size: 49152        Filetype: Regular File
+  File: "SCRATCH_MNT/mmap"
+  Size: 49152        Filetype: Regular File
+Usage OK (type=g)

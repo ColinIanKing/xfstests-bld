@@ -1,0 +1,142 @@
+#! /bin/bash
+# FS QA Test No. 187
+#
+# To test out the noattr2 flag which is broken in pv#980021
+# Given an existing attr2 filesystem, we should be able to mount
+# as noattr2 and go back to an attr1 filesystem.
+#
+# Test the case where there are no more features2 bits on and
+# so the morebitsbit should be off.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+_filter_version()
+{
+	tee -a $seqres.full | tr ',' '\n' | egrep 'ATTR|MORE|LAZY'
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+_require_attrs
+_require_attr_v1
+_require_projid16bit
+
+rm -f $seqres.full
+
+# Reset the options so that we can control what is going on here
+export MKFS_OPTIONS=""
+export MOUNT_OPTIONS=""
+
+# lazysb, attr2 and other feature bits are held in features2 and will require
+# morebitsbit on So test with lazysb and without it to see if the morebitsbit is
+# okay etc. If the mkfs defaults change, these need to change as well.
+export MKFS_NO_LAZY="-m crc=0 -l lazy-count=0 -i projid32bit=0"
+export MKFS_LAZY="-m crc=0 -l lazy-count=1 -i projid32bit=0"
+
+# Make sure that when we think we are testing with morebits off
+# that we really are.
+_scratch_mkfs -i attr=1 $MKFS_NO_LAZY  >/dev/null 2>&1
+$XFS_DB_PROG -c version $SCRATCH_DEV 2>&1 >$tmp.db
+if grep -i morebits $tmp.db
+then
+	echo ""
+	echo "Need to update test $seq so that initial subtests do not use features2"
+	echo ""
+	exit
+fi
+
+echo ""
+echo "*** 1. test attr2 mkfs and then noattr2 mount ***"
+echo ""
+echo "attr2 fs"
+echo ""
+_scratch_mkfs -i attr=2 $MKFS_NO_LAZY >/dev/null 2>&1
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+echo ""
+echo "noattr2 fs"
+echo ""
+_scratch_mount -o noattr2
+$UMOUNT_PROG $SCRATCH_MNT
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+
+# adding an EA will ensure the ATTR1 flag is turned on
+echo ""
+echo "*** 2. test attr2 mkfs and then noattr2 mount with 1 EA ***"
+echo ""
+echo "attr2 fs"
+echo ""
+_scratch_mkfs -i attr=2 $MKFS_NO_LAZY >/dev/null 2>&1
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+echo ""
+echo "noattr2 fs"
+echo ""
+_scratch_mount -o noattr2
+cd $SCRATCH_MNT
+touch testfile
+$SETFATTR_PROG -n user.test -v 0xbabe testfile
+$GETFATTR_PROG testfile
+cd $here
+$UMOUNT_PROG $SCRATCH_MNT
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+
+echo ""
+echo "*** 3. test noattr2 mount and lazy sb ***"
+echo ""
+echo ""
+echo "attr2 fs"
+echo ""
+_scratch_mkfs -i attr=2 $MKFS_LAZY >/dev/null 2>&1
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+echo ""
+echo "noattr2 fs"
+echo ""
+_scratch_mount -o noattr2
+cd $SCRATCH_MNT
+touch testfile
+cd $here
+$UMOUNT_PROG $SCRATCH_MNT
+$XFS_DB_PROG -r -c version $SCRATCH_DEV 2>&1 | _filter_version
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,96 @@
+#! /bin/bash
+# FS QA Test No. 032
+#
+# cross check mkfs detection of foreign filesystems
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+rm -f $seqres.full
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs btrfs
+_supported_os Linux
+
+_require_scratch_nocheck
+_require_no_large_scratch_dev
+
+# mkfs.btrfs did not have overwrite detection at first
+if [ "$FSTYP" == "btrfs" ]; then
+	grep -q 'force overwrite' `echo $MKFS_BTRFS_PROG | awk '{print $1}'` || \
+		_notrun "Installed mkfs.btrfs does not support -f option"
+fi
+
+echo "Silence is golden."
+for fs in `echo ${MKFS_PROG}.* | sed -e "s:${MKFS_PROG}.::g"`
+do
+	preop=""	# for special input needs
+	preargs=""	# for any special pre-device options
+	postargs=""	# for any special post-device options
+
+	# minix, msdos and vfat mkfs fails for large devices, restrict to 2000 blocks
+	[ $fs = minix ] && postargs=2000
+	[ $fs = msdos ] && postargs=2000
+	[ $fs = vfat ] && postargs=2000
+	# these folks prompt before writing
+	[ $fs = jfs ] && preop="echo Y |"
+	[ $fs = gfs ] && preop="echo y |" && preargs="-p lock_nolock -j 1"
+	[ $fs = gfs2 ] && preop="echo y |" && preargs="-p lock_nolock -j 1"
+	[ $fs = reiserfs ] && preop="echo y |" && preargs="-f"
+	# cramfs mkfs requires a directory argument
+	[ $fs = cramfs ] && preargs=/proc/fs
+	[ $fs = ext2 ] && preargs="-F"
+	[ $fs = ext3 ] && preargs="-F"
+	[ $fs = ext4 ] && preargs="-F"
+	[ $fs = ext4dev ] && preargs="-F"
+
+	# overwite the first few Kb - should blow away superblocks
+	src/devzero -n 20 $SCRATCH_DEV >/dev/null
+
+	# create a filesystem of this type
+	echo "=== Creating $fs filesystem..." >>$seqres.full
+	echo "    ( $preop mkfs -t $fs $preargs $SCRATCH_DEV $postargs )" >>$seqres.full
+	eval $preop mkfs -t $fs $preargs $SCRATCH_DEV $postargs >>$seqres.full 2>&1
+
+	if [ $? -eq 0 ] ; then
+		# next, ensure we don't overwrite it
+		echo "=== Attempting $FSTYP overwrite of $fs..." >>$seqres.full
+		${MKFS_PROG}.$FSTYP $SCRATCH_DEV >>$seqres.full 2>&1
+
+		[ $? -eq 0 ] && echo "Failed - overwrote fs type ${fs}!"
+	else
+		echo "mkfs of type ${fs} failed" >>$seqres.full
+	fi
+done
+
+# success, all done
+status=0
+exit

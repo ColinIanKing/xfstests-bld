@@ -1,0 +1,36 @@
+# QA groups control file
+# Defines test groups and nominal group owners
+# - do not start group names with a digit
+# - comment line before each group is "new" description
+#
+001 auto prealloc quick zero
+002 auto quick prealloc
+003 auto quick
+004 auto dump
+005 auto quick metadata ioctl rw
+006 dangerous_fuzzers
+007 fuzzers
+008 fuzzers
+009 fuzzers
+010 fuzzers
+011 fuzzers
+012 fuzzers
+013 fuzzers
+014 fuzzers
+015 fuzzers punch
+016 fuzzers
+017 fuzzers
+018 fuzzers
+019 fuzzers
+020 auto quick ioctl rw
+021 auto quick
+022 auto quick attr dangerous
+271 auto rw quick
+301 aio auto ioctl rw stress
+302 aio auto ioctl rw stress
+303 aio auto ioctl rw stress
+304 aio auto ioctl rw stress
+305 auto
+306 auto rw resize quick
+307 auto ioctl rw
+308 auto ioctl rw prealloc quick

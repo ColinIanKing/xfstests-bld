@@ -1,0 +1,191 @@
+#! /bin/bash
+# FS QA Test No. btrfs/003
+#
+# btrfs vol tests
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2011 Oracle.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+dev_removed=0
+removed_dev_htl=""
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+    if [ $dev_removed == 1 ]; then
+	_scratch_unmount
+	_devmgt_add "${removed_dev_htl}"
+    fi
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_supported_fs btrfs
+_supported_os Linux
+_require_scratch
+_require_scratch_dev_pool 4
+_require_deletable_scratch_dev_pool
+_require_command "$WIPEFS_PROG" wipefs
+
+rm -f $seqres.full
+
+# Test cases related to raid in btrfs
+_test_raid0()
+{
+	export MKFS_OPTIONS="-m raid0 -d raid0"
+	_scratch_pool_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+	_scratch_unmount
+}
+
+_test_raid1()
+{
+	export MKFS_OPTIONS="-m raid1 -d raid1"
+	_scratch_pool_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+	_scratch_unmount
+}
+
+_test_raid10()
+{
+	export MKFS_OPTIONS="-m raid10 -d raid10"
+	_scratch_pool_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+	_scratch_unmount
+}
+
+_test_single()
+{
+	export MKFS_OPTIONS="-m single -d single"
+	_scratch_pool_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+	_scratch_unmount
+}
+
+_test_add()
+{
+	local i
+	local devs[]="( $SCRATCH_DEV_POOL )"
+	local n=${#devs[@]}
+
+	n=$(($n-1))
+
+	export MKFS_OPTIONS=""
+	_scratch_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+	for i in `seq 2 $n`; do
+		$WIPEFS_PROG -a ${devs[$i]} >> $seqres.full 2>&1 || \
+			_fail "wipefs failed"
+		$BTRFS_UTIL_PROG device add ${devs[$i]} $SCRATCH_MNT >> $seqres.full 2>&1 || _fail "device add failed"
+	done
+	$BTRFS_UTIL_PROG filesystem balance $SCRATCH_MNT >> $seqres.full 2>&1 || _fail "balance failed"
+	_scratch_unmount
+}
+
+_test_replace()
+{
+	local i
+	local devs=( $SCRATCH_DEV_POOL )
+	local n=${#devs[@]}
+	local ds
+	local d
+
+	# exclude the first and the last disk in the disk pool
+	n=$(($n-1))
+	ds=${devs[@]:1:$(($n-1))}
+
+	export MKFS_OPTIONS="-m raid1 -d raid1"
+	_scratch_mkfs "$ds" >> $seqres.full 2>&1 || _fail "tr: mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+
+	#pick the 2nd last disk 
+	ds=${devs[@]:$(($n-1)):1}
+
+	# retrive the HTL for this scsi disk
+	d=`echo $ds|cut -d"/" -f3`
+	removed_dev_htl=`ls -l /sys/class/block/${d} | rev | cut -d "/" -f 3 | rev`
+
+	#fail disk
+	_devmgt_remove ${removed_dev_htl} $ds
+	dev_removed=1
+
+	$BTRFS_UTIL_PROG filesystem show $SCRATCH_DEV | grep "Some devices missing" >> $seqres.full || _fail \
+							"btrfs did not report device missing"
+
+	# add a new disk to btrfs
+	ds=${devs[@]:$(($n)):1}
+	$WIPEFS_PROG -a ${ds} >> $seqres.full 2>&1 || _fail "wipefs failed"
+	$BTRFS_UTIL_PROG device add ${ds} $SCRATCH_MNT >> $seqres.full 2>&1 || _fail "dev add failed"
+	# in some system balance fails if there is no delay (a bug)
+	# putting sleep 10 to work around as of now
+	# sleep 10
+	$BTRFS_UTIL_PROG filesystem balance $SCRATCH_MNT >> $seqres.full 2>&1 || _fail "dev balance failed"
+
+	# cleaup. add the removed disk
+	_scratch_unmount
+	_devmgt_add "${removed_dev_htl}"
+	dev_removed=0
+}
+
+_test_remove()
+{
+	_scratch_pool_mkfs >> $seqres.full 2>&1 || _fail "mkfs failed"
+	_scratch_mount
+	dirp=`mktemp -duq $SCRATCH_MNT/dir.XXXXXX`
+	_populate_fs -n 1 -f 20 -d 10 -r $dirp -s 10
+
+	# pick last dev in the list
+	dev_del=`echo ${SCRATCH_DEV_POOL} | awk '{print $NF}'`
+	$BTRFS_UTIL_PROG device delete $dev_del $SCRATCH_MNT || _fail "btrfs device delete failed"
+	$BTRFS_UTIL_PROG filesystem show $SCRATCH_DEV 2>&1 | grep $dev_del >> $seqres.full && _fail "btrfs still shows the deleted dev"
+	_scratch_unmount
+}
+
+_test_raid0
+_test_raid1
+_test_raid10
+_test_single
+_test_add
+_test_replace
+_test_remove
+
+echo "Silence is golden"
+status=0; exit

@@ -1,0 +1,293 @@
+#! /bin/bash
+# FS QA Test No. 193
+#
+# Test permission checks in ->setattr
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup_files; exit \$status" 0 1 2 3 15
+tag="added by qa $seq"
+
+#
+# For some tests we need a secondary group for the qa_user.  Currently
+# that's not available in the framework, so the tests using it are
+# commented out.
+#
+#group2=foo
+
+#
+# Create two files, one owned by root, one by the qa_user
+#
+_create_files()
+{
+	touch $test_root
+	touch $test_user
+	chown ${qa_user}:${qa_user} $test_user
+}
+
+#
+# Remove our files again
+#
+_cleanup_files()
+{
+	rm -f $test_user
+	rm -f $test_root
+}
+
+_filter_files()
+{
+	sed -e "s,$test_root,test.root,g" -e "s,$test_user,test.user,g"
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+
+_require_test
+_require_user
+
+test_root=$TEST_DIR/$seq.$$.root
+test_user=$TEST_DIR/$seq.$$.user
+
+#
+# make sure we have a normal umask set
+#
+umask 022
+
+#
+# Test the ATTR_UID case
+#
+echo
+echo "testing ATTR_UID"
+echo
+
+_create_files
+
+echo "user: chown root owned file to qa_user (should fail)"
+su ${qa_user} -c "chown ${qa_user} $test_root" 2>&1 | _filter_files
+
+echo "user: chown root owned file to root (should fail)"
+su ${qa_user} -c "chown root $test_root" 2>&1 | _filter_files
+
+echo "user: chown qa_user owned file to qa_user (should succeed)"
+su ${qa_user} -c "chown ${qa_user} $test_user"
+
+# this would work without _POSIX_CHOWN_RESTRICTED
+echo "user: chown qa_user owned file to root (should fail)"
+su ${qa_user} -c "chown root $test_user" 2>&1 | _filter_files
+
+_cleanup_files
+
+#
+# Test the ATTR_GID case
+#
+echo
+echo "testing ATTR_GID"
+echo
+
+_create_files
+
+echo "user: chgrp root owned file to root (should fail)"
+su ${qa_user} -c "chgrp root $test_root" 2>&1 | _filter_files
+
+echo "user: chgrp qa_user owned file to root (should fail)"
+su ${qa_user} -c "chgrp root $test_user" 2>&1 | _filter_files
+
+echo "user: chgrp root owned file to qa_user (should fail)"
+su ${qa_user} -c "chgrp ${qa_user} $test_root" 2>&1 | _filter_files
+
+echo "user: chgrp qa_user owned file to qa_user (should succeed)"
+su ${qa_user} -c "chgrp ${qa_user} $test_user"
+
+#echo "user: chgrp qa_user owned file to secondary group (should succeed)"
+#su ${qa_user} -c "chgrp ${group2} $test_user"
+
+_cleanup_files
+
+#
+# Test the ATTR_MODE case
+#
+echo
+echo "testing ATTR_MODE"
+echo
+
+_create_files
+
+echo "user: chmod a+r on qa_user owned file (should succeed)"
+su ${qa_user} -c "chmod a+r $test_user"
+
+echo "user: chmod a+r on root owned file (should fail)"
+su ${qa_user} -c "chmod a+r $test_root" 2>&1 | _filter_files
+
+#
+# Setup a file owned by the qa_user, but with a group ID that
+# is not present in the qa_users group list (use root to make it easier for it)
+# and mark it with set sgid bit
+#
+# From Posix (www.opengroup.org) for chmod:
+#	"If the calling process does not have appropriate privileges, and
+#	if the group ID of the file does not match the effective group ID
+#	or one of the supplementary group IDs and if the file is a regular
+#	file, bit S_ISGID (set-group-ID on execution) in the file's mode
+#	shall be cleared upon successful return from chmod()."
+# i.e.
+# reg file + file's gid not in process' group set + no approp. privileges -> clear sgid
+#
+echo "check that the sgid bit is cleared"
+chown ${qa_user}:root $test_user
+chmod g+s $test_user
+
+# and let the qa_user change permission bits
+su ${qa_user} -c "chmod a+w $test_user"
+stat -c '%A' $test_user
+
+#
+# Setup a file owned by the qa_user and with the suid bit set.
+# A chmod by root should not clear the suid bit.
+# There is nothing in Posix that says it should but just checking.
+#
+echo "check that suid bit is not cleared"
+chmod u+s $test_user
+chmod a+w $test_user
+stat -c '%A' $test_user
+
+_cleanup_files
+
+_create_files
+# Now test out the clear of suid/sgid for chown
+#
+# From Posix (www.opengroup.org) for chown:
+#	"If the specified file is a regular file, one or more of the S_IXUSR,
+#	S_IXGRP, or S_IXOTH bits of the file mode are set, and the process
+#	does not have appropriate privileges, the set-user-ID (S_ISUID) and
+#	set-group-ID (S_ISGID) bits of the file mode shall be cleared upon
+#	successful return from chown(). If the specified file is a regular
+#	file, one or more of the S_IXUSR, S_IXGRP, or S_IXOTH bits of the
+#	file mode are set, and the process has appropriate privileges, it
+#	is implementation-defined whether the set-user-ID and set-group-ID
+#	bits are altered. If the chown() function is successfully invoked
+#	on a file that is not a regular file and one or more of the S_IXUSR,
+#	S_IXGRP, or S_IXOTH bits of the file mode are set, the set-user-ID
+#	and set-group-ID bits may be cleared."
+# i.e.
+# reg file + exec-mode-bits set + no appropriate privileges -> clear suid,sgid
+# reg file + exec-mode-bits set + appropriate privileges -> maybe clear suid,sgid
+# non reg file + exec-mode-bits set + chown success on file (??) -> maybe clear suid/sgid
+#
+echo "check that suid/sgid bits are cleared after successful chown..."
+
+echo "with no exec perm"
+chmod ug+s $test_user
+echo -n "before: "; stat -c '%A' $test_user
+chown root $test_user
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with user exec perm"
+chmod ug+s $test_user
+chmod u+x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+chown root $test_user
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with group exec perm"
+chmod ug+s $test_user
+chmod g+x $test_user
+chmod u-x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+chown root $test_user
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with user+group exec perm"
+chmod ug+s $test_user
+chmod ug+x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+chown root $test_user
+echo -n "after:  "; stat -c '%A' $test_user
+
+_cleanup_files
+
+_create_files
+# Now test out the clear of suid/sgid for truncate
+#
+echo "check that suid/sgid bits are cleared after successful truncate..."
+
+echo "with no exec perm"
+echo frobnozzle >> $test_user
+chmod ug+s $test_user
+echo -n "before: "; stat -c '%A' $test_user
+su ${qa_user} -c "echo > $test_user"
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with user exec perm"
+echo frobnozzle >> $test_user
+chmod ug+s $test_user
+chmod u+x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+su ${qa_user} -c "echo > $test_user"
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with group exec perm"
+echo frobnozzle >> $test_user
+chmod ug+s $test_user
+chmod g+x $test_user
+chmod u-x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+su ${qa_user} -c "echo > $test_user"
+echo -n "after:  "; stat -c '%A' $test_user
+
+echo "with user+group exec perm"
+echo frobnozzle >> $test_user
+chmod ug+s $test_user
+chmod ug+x $test_user
+echo -n "before: "; stat -c '%A' $test_user
+su ${qa_user} -c "echo > $test_user"
+echo -n "after:  "; stat -c '%A' $test_user
+
+#
+# Test ATTR_*TIMES_SET
+#
+echo
+echo "testing ATTR_*TIMES_SET"
+echo
+
+_create_files
+
+echo "user: touch qa_user file (should succeed)"
+su ${qa_user} -c "touch $test_user"
+
+echo "user: touch root file (should fail)"
+su ${qa_user} -c "touch $test_root" 2>&1 | _filter_files
+
+_cleanup_files
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

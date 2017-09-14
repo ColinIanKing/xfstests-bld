@@ -1,0 +1,250 @@
+#! /bin/bash
+# FS QA Test No. 097. Modifed from UDFQA test 033.
+#
+# simple attr tests for EAs:
+#  - set
+#  - get
+#  - list
+#  - remove
+# Basic testing.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seqfull=$0
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+TARGET_DIR=
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    rm -f $tmp.*
+    cd $TARGET_DIR
+    rm -f foo
+}
+
+_umount_and_mount()
+{
+    cd /
+    umount $TARGET_DIR
+    if [ "$FSTYP" == "xfs" ]; then
+	_test_mount
+    else
+	_scratch_mount
+    fi
+    
+    cd $TARGET_DIR
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# link correct .out file
+# This is done bacause udf and xfs print attrs in different orders.
+rm -rf $seqfull.out
+if [ "$FSTYP" == "xfs" ]; then
+    ln -s $seq.out.xfs $seqfull.out
+else
+    ln -s $seq.out.udf $seqfull.out
+fi
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX
+
+_require_test
+_require_scratch
+_require_attrs
+
+TARGET_DIR=$SCRATCH_MNT
+[ "$FSTYP" == "xfs" ] && TARGET_DIR=$TEST_DIR
+cd $TARGET_DIR
+
+echo "create file foo"
+rm -f foo 
+touch foo
+
+echo "should be no EAs for foo:"
+${ATTR_PROG} -l foo
+
+echo "set EA <noise,woof>:"
+${ATTR_PROG} -s noise -V woof foo
+
+echo "set EA <colour,blue>:"
+${ATTR_PROG} -s colour -V blue foo
+
+echo "set EA <size,small>:"
+${ATTR_PROG} -s size -V small foo
+
+echo "list the EAs for foo: noise, colour, size" 
+${ATTR_PROG} -l foo
+
+echo "check the list again for foo"
+${ATTR_PROG} -l foo
+
+echo "unmount the FS and see if EAs are persistent"
+_umount_and_mount
+
+echo "check the list again for foo after umount/mount"
+${ATTR_PROG} -l foo
+
+echo "get the value of the noise EA"
+${ATTR_PROG} -g noise foo
+
+echo "get the value of the colour EA which was removed earlier"
+${ATTR_PROG} -g colour foo
+
+echo "get the value of the size EA"
+${ATTR_PROG} -g size foo
+
+echo "remove the colour EA on foo"
+${ATTR_PROG} -r colour foo
+
+echo "list EAs for foo: noise, size"
+${ATTR_PROG} -l foo
+
+echo "get the value of the noise EA"
+${ATTR_PROG} -g noise foo
+
+echo "get the value of the colour EA which was removed earlier"
+${ATTR_PROG} -g colour foo
+
+echo "get the value of the size EA"
+${ATTR_PROG} -g size foo
+
+echo "list all the EAs again: noise, size"
+${ATTR_PROG} -l foo
+
+echo "change the value of the size EA from small to huge"
+${ATTR_PROG} -s size -V huge foo
+
+echo "get the size EA which should now have value huge"
+${ATTR_PROG} -g size foo
+
+echo "list EAs: noise, size"
+${ATTR_PROG} -l foo
+
+echo "remove the size EA from foo"
+${ATTR_PROG} -r size foo
+
+echo "list EAs: noise (size EA has been removed)"
+${ATTR_PROG} -l foo
+
+echo "get the noise EA: woof"
+${ATTR_PROG} -g noise foo
+
+echo "try removing non-existent EA named woof"
+${ATTR_PROG} -r woof foo
+
+echo "try removing already removed EA size"
+${ATTR_PROG} -r size foo
+
+echo "list EAs: noise"
+${ATTR_PROG} -l foo
+
+echo "try removing already removed EA colour"
+${ATTR_PROG} -r colour foo
+
+echo "list EAs: noise"
+${ATTR_PROG} -l foo
+
+echo "remove remaining EA noise"
+${ATTR_PROG} -r noise foo
+
+echo "list EAs: should be no EAs left now"
+${ATTR_PROG} -l foo
+
+echo "unmount the FS and see if EAs are persistent"
+_umount_and_mount
+
+echo "list EAs: should still be no EAs left"
+${ATTR_PROG} -l foo
+
+echo ""
+echo "*** Test out the root namespace ***"
+echo ""
+
+echo "set EA <root:colour,marone>:"
+${ATTR_PROG} -R -s colour -V marone foo
+
+echo "set EA <user:colour,beige>:"
+${ATTR_PROG} -s colour -V beige foo
+
+echo "set EA <user:vomit,pizza>:"
+${ATTR_PROG} -s vomit -V pizza foo
+
+echo "set EA <root:noise,whack>:"
+${ATTR_PROG} -R -s noise -V whack foo
+
+echo "list root EAs: <root:colour,noise>:"
+${ATTR_PROG} -R -l foo
+
+echo "list user EAs: <user:colour,vomit>:"
+${ATTR_PROG} -l foo
+
+echo "get root EA colour: marone"
+${ATTR_PROG} -R -g colour foo
+
+echo "get root EA noise: whack"
+${ATTR_PROG} -R -g noise foo
+
+echo "get root EA vomit which is a user EA => find nothing"
+${ATTR_PROG} -R -g vomit foo
+
+echo ""
+echo "unmount the FS and see if EAs are persistent"
+echo ""
+_umount_and_mount
+
+echo "get root EA colour: marone"
+${ATTR_PROG} -R -g colour foo
+
+echo "get root EA noise: whack"
+${ATTR_PROG} -R -g noise foo
+
+echo "get user EA vomit: pizza" 
+${ATTR_PROG} -g vomit foo
+
+echo "remove the root colour EA"
+${ATTR_PROG} -R -r colour foo
+
+echo "list root EAs: <root:noise>:"
+${ATTR_PROG} -R -l foo
+
+echo "list user EAs: <user:colour,vomit>:"
+${ATTR_PROG} -l foo
+
+echo "remove the final root EA noise"
+${ATTR_PROG} -R -r noise foo
+
+echo "list root EAs: none"
+${ATTR_PROG} -R -l foo
+
+cd /
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,134 @@
+#! /bin/bash
+# FS QA Test No. 082
+#
+# Test out the v2 stripe logs with logprint
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seqfull=$0
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+
+_cleanup()
+{
+    cd /
+    _cleanup_logfiles
+    rm -f $tmp.*
+    _scratch_unmount 2>/dev/null
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+# prelim
+rm -f $seqres.full $tmp.*
+_require_scratch
+_require_v2log 
+
+# link correct .out file
+_link_out_file_named $seqfull.op $(_get_os_name)
+
+echo "*** init FS"
+_scratch_unmount >/dev/null 2>&1
+
+cat >$tmp.seq.params <<EOF
+# mkfs-opt             mount-opt            start-blk
+  version=2            logbsize=32k       2
+  version=2,su=4096    logbsize=32k       8
+  version=2,su=32768   logbsize=32k       64
+#
+# expect following line to fail
+#
+  version=2,su=36864   logbsize=32k       72
+#
+# following is not a power of 2 BBs 
+#
+  version=2,su=5120    logbsize=32k       10
+EOF
+
+# Do the work for various log params which
+# should not effect the data content of the log
+# Try with and without sync'ing - sync'ing will mean that
+# the log will be written out unfilled and thus the log 
+# stripe can have an effect.
+#
+for s in sync nosync ; do
+    cat $tmp.seq.params \
+    | while read mkfs mnt start restofline
+    do
+	if [ "$mkfs" = "#" ]; then 
+	    continue
+	fi
+	if [ "$HOSTOS" = "IRIX" ]; then 
+	    # don't have umount rec at start on IRIX
+	    # so we won't have to skip over it and get to 
+	    # another stripe boundary
+	    start=0
+	fi
+	echo "--- mkfs=$mkfs, mnt=$mnt, sync=$s ---"
+	export MOUNT_OPTIONS="-o $mnt"
+	if ! _mkfs_log "-l $mkfs"; then
+	    continue
+	fi	
+	if [ $s = "sync" ]; then
+	    _create_log_sync
+	else
+	    _create_log
+	fi
+	if [ $? -ne 0 ]; then
+	    continue
+	fi
+	_check_log
+
+	sync_suffix=".$s"
+
+	if [ $s = "sync" ]; then
+	    # if sync then we have chance of DATA FORK EXTENTS items
+	    # not hanging around very long due to inode syncing to disk
+	    # (see comment in xfs_iflush_int())
+	    # and this is to hard to reconcile in the op output
+	    :
+	else
+	    _print_operation
+	    _cmp_op_output $seqfull.op $filtered
+	fi
+
+	_print_transaction_inode $start
+	_cmp_output $seqfull.trans_inode $filtered
+
+	_print_transaction_buf $start
+	_cmp_output $seqfull.trans_buf $filtered
+    done
+done
+
+status=0
+exit

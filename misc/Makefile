@@ -1,0 +1,39 @@
+#
+# Makefile for local miscellaneous test/benchmark programs
+#
+
+srcdir = .
+
+top_builddir = .
+my_dir = .
+
+CC = gcc
+CFLAGS = -g -O2
+LDFLAGS = -static
+
+PROGS= fname_benchmark resize syncfs
+SCRIPTS= encrypt-fname-benchmark encrypt-smoketest encrypt-test-revalidate
+
+all: $(PROGS)
+
+fname_benchmark: fname_benchmark.c
+	$(CC) $(LDFLAGS) -o fname_benchmark -O2 $<
+
+resize: resize.c
+	$(CC) $(LDFLAGS) -o resize -O2 $<
+
+syncfs: syncfs.c
+	$(CC) $(LDFLAGS) -o syncfs -O2 $<
+
+install:
+	mkdir -p $(DESTDIR)/bin
+	for i in $(PROGS) $(SCRIPTS) ; do \
+		cp $$i $(DESTDIR)/bin ; \
+		chmod +x $(DESTDIR)/bin/$$i ; \
+	done
+
+clean:
+	rm -f $(PROGS)
+
+Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
+	cd $(top_builddir); CONFIG_FILES=$(my_dir)/Makefile ./config.status

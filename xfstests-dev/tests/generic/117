@@ -1,0 +1,113 @@
+#! /bin/bash
+# FS QA Test No. 117
+#
+# Attempt to cause filesystem corruption with serial fsstresses doing
+# extended attributes writes - pv 940655
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2005 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# seed and options for fsstress known to cause curruptions
+seed=1122413794
+fss_ops=" -z \
+    -f attr_remove=100 \
+    -f attr_set=100 \
+    -f chown=3 \
+    -f creat=4 \
+    -f dread=4 \
+    -f dwrite=4 \
+    -f fdatasync=1 \
+    -f fsync=1 \
+    -f getdents=1 \
+    -f link=1 \
+    -f mkdir=2 \
+    -f mknod=2 \
+    -f read=1 \
+    -f readlink=1 \
+    -f rename=2 \
+    -f rmdir=1 \
+    -f setxattr=1 \
+    -f stat=1 \
+    -f symlink=2 \
+    -f sync=1 \
+    -f truncate=2 \
+    -f unlink=1 \
+    -f write=4 \
+    -s $seed \
+    -m 31 -n 1000 -p 1"
+
+ITERATIONS=10
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+
+_require_scratch
+_require_attrs
+
+rm -f $seqres.full
+_scratch_unmount >/dev/null 2>&1
+echo "*** MKFS ***"                         >>$seqres.full
+echo ""                                     >>$seqres.full
+_scratch_mkfs                               >>$seqres.full 2>&1 \
+    || _fail "mkfs failed"
+_scratch_mount                              >>$seqres.full 2>&1 \
+    || _fail "mount failed"
+
+mkdir -p $SCRATCH_MNT/fsstress
+
+echo
+echo Running fsstress in serial:
+i=0
+while [ $i -lt $ITERATIONS ]; do
+    echo fsstress iteration: $i | tee -a $seqres.full
+    $FSSTRESS_PROG \
+	-d $SCRATCH_MNT/fsstress \
+	$fss_ops -S c >>$seqres.full 2>&1
+
+    let i=$i+1
+done
+
+cd /
+_scratch_unmount
+echo 
+echo Checking filesystem
+
+status=$?
+exit

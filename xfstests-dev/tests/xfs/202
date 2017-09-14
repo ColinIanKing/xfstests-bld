@@ -1,0 +1,63 @@
+#! /bin/bash
+# FS QA Test No. 202
+#
+# Test out the xfs_repair -o force_geometry option on single-AG filesystems.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2009 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/repair
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+# single AG will cause default xfs_repair to fail. This test is actually
+# testing the special corner case option needed to repair a single AG fs.
+_require_scratch_nocheck
+
+#
+# The AG size is limited to 1TB (or even less with historic xfsprogs),
+# so chose a small enough filesystem to make sure we can actually create
+# a single AG filesystem.
+#
+echo "== Creating single-AG filesystem =="
+_scratch_mkfs_xfs -d agcount=1 -d size=$((1024*1024*1024)) >/dev/null 2>&1 \
+ || _fail "!!! failed to make filesystem with single AG"
+
+echo "== Trying to repair it (should fail) =="
+_scratch_xfs_repair
+
+echo "== Trying to repair it with -o force_geometry =="
+_scratch_xfs_repair -o force_geometry 2>&1 | _filter_repair
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

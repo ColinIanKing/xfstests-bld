@@ -1,0 +1,134 @@
+#! /bin/bash
+# FS QA Test No. 013
+#
+# fsstress
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    # we might get here with a RO FS
+    _test_cycle_mount
+    # now remove fsstress directory.
+    # N.B. rm(1) on IRIX can find problems when building up a long pathname
+    # such that what it has is greater the 1024 chars and will
+    # stop and complain - so get rid of complaint
+    # Ref. pv#935754
+    rm -rf $TEST_DIR/fsstress.$$.* 2>&1 | grep -v 'Path too long'
+}
+
+_filesize()
+{
+    ls -l $1 | $AWK_PROG '{print "    filesize = " $5}'
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_do_test()
+{
+    _n="$1"
+    _param="$2"
+    _count="$3"
+
+    out=$TEST_DIR/fsstress.$$.$_n
+    rm -rf $out
+    if ! mkdir $out
+    then
+        echo "    failed to mkdir $out"
+        status=1
+        exit
+    fi
+
+    echo ""
+    echo "-----------------------------------------------"
+    echo "fsstress.$_n : $_param"
+    echo "-----------------------------------------------"
+    # -m limits number of users/groups so check doesn't fail (malloc) later
+    dbgoutfile=$seqres.full
+    if ! $FSSTRESS_PROG $_param $FSSTRESS_AVOID -v -m 8 -n $_count -d $out >>$dbgoutfile 2>&1
+    then
+        echo "    fsstress (count=$_count) returned $? - see $seqres.full"
+        echo "--------------------------------------"       >>$seqres.full
+        echo "$_n - output from fsstress:"                  >>$seqres.full
+        echo "--------------------------------------"       >>$seqres.full
+        echo "<NOT LOGGED>"                                 >>$seqres.full
+        #cat $tmp.out                                       >>$seqres.full
+        status=1
+    fi
+
+    _check_test_fs
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+_require_test
+
+rm -f $seqres.full
+echo "brevity is wit..."
+
+count=1000
+procs=20
+
+_check_test_fs
+
+# the default
+
+_do_test 1 "-r" $count
+
+# and the default with multiprocess
+
+_do_test 2 "-p $procs -r" $count
+
+# from Glen's notes
+
+_do_test 3 "-p 4 -z -f rmdir=10 -f link=10 -f creat=10 -f mkdir=10 -f rename=30 -f stat=30 -f unlink=30 -f truncate=20" $count
+
+# if all ok by here then probably don't need $seqres.full
+rm -f $seqres.full
+
+exit
+
+# Test with error injection:
+#
+# (error injection)
+# fsstress -n 1000 -d $scratch -p 4 -z -f rmdir=10 -f link=10 -f creat=10 \
+#          -f mkdir=10 -f rename=30 -f stat=30 -f unlink=30 -f truncate=20 \
+#          -e 1
+#
+# Error values 1 - 6 test IFLUSH
+#         1 - corrupt buffer being flushed to di_core.di_magic
+#         2 - corrupt inode being flushed i_d.di_magic
+#         3 - corrupt S_IFREG format check
+#         4 - corrupt S_IFDIR format check
+#         5 - corrupt i_d.di_nextents
+#         6 - corrupt i_d.di_forkoff > sb_inodesize

@@ -1,0 +1,95 @@
+#! /bin/bash
+# FS QA Test No. 052
+#
+# To test log replay by shutdown of file system
+# This is the first simple initial test to ensure that
+# the goingdown ioctl is working and recovery of
+# create transactions is working.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/log
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+
+rm -f $seqres.full
+rm -f $tmp.log
+
+_require_scratch
+_require_scratch_shutdown
+_require_logstate
+
+echo "mkfs"
+_scratch_mkfs >>$seqres.full 2>&1 \
+    || _fail "mkfs scratch failed"
+
+echo "mount"
+_scratch_mount >>$seqres.full 2>&1 \
+    || _fail "mount failed: $MOUNT_OPTIONS"
+
+echo "touch files"
+touch $SCRATCH_MNT/{0,1,2,3,4,5,6,7,8,9}{0,1,2,3,4,5,6,7,8,9}
+
+echo "godown"
+src/godown -v -f $SCRATCH_MNT >> $seqres.full
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after going down..."
+_print_logstate
+
+# curious if FS consistent at start
+if false; then
+    if _xfs_check $SCRATCH_DEV; then
+       echo "*** checked ok ***"
+    fi
+fi
+
+echo "mount with replay"
+_scratch_mount $mnt >>$seqres.full 2>&1 \
+    || _fail "mount failed: $mnt $MOUNT_OPTIONS"
+
+echo "ls SCRATCH_MNT"
+ls $SCRATCH_MNT
+
+echo "unmount"
+_scratch_unmount
+
+echo "logprint after mount and replay..."
+_print_logstate
+
+# success, all done
+status=0
+exit

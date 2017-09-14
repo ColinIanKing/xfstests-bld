@@ -1,0 +1,100 @@
+#! /bin/bash
+# FS QA Test No. 199
+#
+# Check that the features2 location fixups work correctly.  We check both
+# a regular read-write mount of a filesystem and the case where the
+# filesystem is first mounted read-only and then later remounted read-write,
+# which is the usual case for the root filesystem.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_cleanup()
+{
+	cd /
+	_scratch_unmount >/dev/null 2>&1
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_scratch
+
+get_features()
+{
+	xfs_db -x $SCRATCH_DEV -c "sb" -c "print $1" | awk '// {print $3}'
+}
+
+# clear any mkfs options so that we can directly specify the options we need to
+# be able to test the features bitmask behaviour correctly.
+MKFS_OPTIONS=
+_scratch_mkfs_xfs -m crc=0 -l lazy-count=1 >/dev/null 2>&1
+
+# Grab the initial configuration. This checks mkfs sets the fields properly, and
+# gives us the values the resultant tests should be the same as for testing at
+# the end of the test. We don't hard code feature values, because that makes the
+# test break every time we change mkfs feature defaults.
+f2=`get_features features2`
+bf2=`get_features bad_features2`
+
+#
+# Now clear the normal flags
+#
+echo "Clearing features2:"
+xfs_db -x $SCRATCH_DEV -c 'sb' -c 'write features2 0'
+
+_scratch_mount
+_scratch_unmount
+rwf2=`get_features features2`
+
+#
+# Clear the normal flags again for the second rount.
+#
+echo "Clearing features2:"
+xfs_db -x $SCRATCH_DEV -c 'sb' -c 'write features2 0'
+
+#
+# And print the flags after a mount ro and remount rw
+#
+_scratch_mount -o ro
+_scratch_mount -o remount,rw
+_scratch_unmount
+rof2=`get_features features2`
+
+[ "$f2" != "$bf2" ] && echo "mkfs: features2 $f2 != bad_features2 $bf2"
+[ "$f2" != "$rwf2" ] && echo "mount rw: old features2 $f2 != new features2 $rwf2"
+[ "$f2" != "$rof2" ] && echo "ro->rw: old features2 $f2 != new features2 $rof2"
+
+# success, all done
+echo "*** done"
+rm -f $seqres.full
+status=0

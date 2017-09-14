@@ -1,0 +1,589 @@
+##/bin/bash
+#
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# common routines for log testing
+# Created by dxm@sgi.com & tes@sgi.com
+#
+
+fulldir=$seqres.fulldir
+rm -rf $fulldir
+
+_cleanup_logfiles()
+{
+    if [ $status -eq 0 ]; then
+	# don't keep these files around unless something went wrong
+        rm -rf $fulldir
+    fi
+}
+
+_full()
+{
+    echo ""            >>$seqres.full
+    echo "*** $* ***"  >>$seqres.full
+    echo ""            >>$seqres.full
+}
+
+_echofull()
+{
+    echo ""            | tee -a $seqres.full
+    echo "*** $* ***"  | tee -a $seqres.full
+    echo ""            | tee -a $seqres.full
+}
+
+# Handle the operations which get split over Log Record
+# boundaries.
+# Oper (379)..... flags: CONTINUE
+# ...
+# Oper (0)....... flags: WAS_CONT END
+#
+# or
+#
+# Oper (379)..... flags: none 
+# ...
+# Oper (0)....... flags: none 
+#
+_filter_opnum()
+{
+    $AWK_PROG '
+BEGIN { 
+	debug = 0 
+	}
+/^Oper/ && debug {
+	    printf "line = %s\n", $0
+	}
+/^Oper/ {
+	    was_cont = 0
+	}
+/^Oper/ && /flags: CONTINUE/ { 
+            # this will be the first op of split region
+	    $9 = "none" # overwrite CONTINUE flags
+	    print
+	    print "Not printing rest"
+	    was_cont = 1
+	    next        
+	}
+/^Oper/ && /flags: WAS_CONT END/ {
+	    # this will be the last op of split region
+	    # skip over was-continued op
+	    # we assume there can be only 1
+	    was_cont = 1
+	    next        
+	}
+(was_cont == 1) { 
+	    # skip over any continued op stuff
+	    next
+	}
+	{print}
+    '
+}
+
+#
+# Filter out things that can change
+# We have complexities which change when log is sync'ed at different
+# times.
+# Example1: DATA FORK EXTENTS
+# These will not show up if inode is sync'ed sooner
+#	/DATA FORK EXTENTS/d;
+#	/INODE:/s/flags:0x5/flags:0x1/g;
+# define XFS_ILOG_CORE   0x001   /* log standard inode fields */
+# define XFS_ILOG_DEXT   0x004   /* log i_df.if_extents */
+#
+#
+
+_filter_logprint()
+{
+    _fix_malloc |\
+    sed '
+        s/ver:[0-9]/ver:<VERS>/;
+        s/version [0-9] format [0-9]/version <VERS> format <FORMAT>/;
+        s/data device: 0x[0-9a-f][0-9a-f]*/data device: <DEVICE>/;
+        s/log device: 0x[0-9a-f][0-9a-f]*/log device: <DEVICE>/;
+        s/log file: \".*\"/log device: <DEVICE>/;
+        s/daddr: [0-9][0-9]*/daddr: <DADDR>/;
+        s/length: [0-9][0-9]*/length: <LENGTH>/;
+        s/length: [0-9][0-9]*/length: <LENGTH>/;
+        s/^cycle num overwrites: .*$/cycle num overwrites: <TIDS>/;
+        s/tid: [0-9a-f][0-9a-f]*/tid: <TID>/;
+        s/tid:0x[0-9a-f][0-9a-f]*/tid:<TID>/;
+        s/q:0x[0-9a-f][0-9a-f]*/q:<Q>/;
+        s/a:0x[0-9a-f][0-9a-f]*/a:<A>/g;
+        s/blkno:0x[0-9a-f][0-9a-f]*/blkno:<BLKNO>/g;
+        s/blkno: *[0-9][0-9]* (0x[0-9a-f]*)/blkno: <BLKNO> (<BLKNO>)/g;
+        s/blkno: *[0-9][0-9]*/blkno: <BLKNO>/g;
+        s/boff: [0-9][0-9]*/boff: <BOFF>/g;
+        s/len: *[0-9][0-9]*/len:<LEN>/g;
+	/BUF:/s/[ 	]*flags:.*$//;
+	/zeroed blocks/s/[0-9][0-9]*/<COUNT>/g;
+	/cleared blocks/d;
+	/log tail/s/[0-9][0-9]*/<COUNT>/g;
+        s/atime:[0-9a-fx]*  *mtime:[0-9a-fx]*  *ctime:[0-9a-fx]*/atime:<TIME>  mtime:<TIME>  ctime:<TIME>/;
+        s/atime 0x[0-9a-f]* mtime 0x[0-9a-f]* ctime 0x[0-9a-f]*/atime <TIME>  mtime <TIME>  ctime <TIME>/;
+        s/block [0-9][0-9]*/block <BLOCK>/;
+        s/icount: *[0-9][0-9]*  *ifree: *[0-9][0-9]*  *fdblks: *[0-9][0-9]*  *frext: *[0-9][0-9]*/icount:<COUNT> ifree:<FREE> fdblks:<BLOCKS> frext:<COUNT>/;
+        s/sunit: *[0-9][0-9]*  *swidth: *[0-9][0-9]*/sunit:<SUNIT> swidth:<SWIDTH>/;
+        s/1st: *[0-9][0-9]*  *last: *[0-9][0-9]*  *cnt: *[0-9][0-9]*  *freeblks: *[0-9][0-9]*  *longest: *[0-9][0-9]*/1st:<NUM> last:<NUM> cnt:<COUNT> freeblks:<COUNT> longest:<NUM>/;
+        s/^uuid: *[0-9a-f-][0-9a-f-]* *format: *.*$/uuid: <UUID> format: <FORMAT>/;
+        /flushiter:/d;
+	/version:/,/h_size:/d;
+	/override tail/s/[0-9][0-9]*/<TAIL_BLK>/;
+	/^---*/d;
+	/^===*/d;
+	/^~~~*/d;
+	/extended-header/d;
+	/LOG REC AT LSN/d;
+	/DATA FORK EXTENTS/d;
+	s/BUF: cnt:[1-9][0-9]* total:[1-9][0-9]*.*/BUF: cnt:C total:T/;
+	s/INO: cnt:[1-9][0-9]* total:[1-9][0-9]*.*/INO: cnt:C total:T/;
+	s/#regs: *[1-9][0-9]*/#regs:R/;
+	/INODE:/s/flags:0x5/flags:0x1/g;
+	s/Oper ([0-9][0-9]*)/Oper (OPNUM)/;
+	/^[ 	]*$/d;
+	s/  */ /g;
+	s/ $//;
+	s/newino: 0x[0-9a-f]*$/newino: <INO>/g
+	s/newino:0x[0-9a-f]*$/newino:<INO>/g
+	s/ino: 0x[0-9a-f]* flags:/ino: <INO> flags:/g
+	s/ino:0x[0-9a-f]* flags:/ino:<INO> flags:/g
+	s/onlink:[0-9][0-9]*/onlink:<ONLINK>/;
+	s/gen:-*[0-9][0-9]*/gen:<GEN>/;
+	s/gen 0x[0-9a-f][0-9a-f]*/gen <GEN>/;
+    '|\
+    awk '
+	# collapse BUF DATA group into 1 line
+        # for Oper data this can be over separate operations...ughh
+        /BUF DATA/ { 
+		if (!buf_data) { # 1st one
+		    if (oper) {	
+			print oper
+			oper = 0
+		    }		
+		    print
+		}
+		buf_data = 1
+		oper = 0 # wont need it now
+		next
+	}
+	/^Oper/ { 
+		# store it as we dont know if 2nd BUF DATA is to follow
+		if (oper) {
+		    print oper
+		}
+		oper = $0
+		next
+	}
+	/^TRANS/ && dummy_rec == 1 {
+		# start printing again - dummy transaction over
+		dummy_rec = 0
+	}
+	/DUMMY1/ {
+		# filter out dummy transactions
+		dummy_rec = 1
+		next
+	}
+        {
+		if (dummy_rec) {
+		    next
+		}
+		buf_data = 0
+		if (oper) { # now we can print out oper
+		    print oper
+		    oper = 0	
+		}
+		print
+	}
+    '
+}
+
+_check_log()
+{
+    _full "clean_log : xfs_logprint"
+    _scratch_xfs_logprint -t | tee -a $seqres.full \
+        | head | grep -q "<CLEAN>" || _fail "DIRTY LOG"
+}
+
+_scratch_xfs_logstate()
+{
+    _scratch_xfs_logprint -t | tee -a $seqres.full | grep -q "<CLEAN>"
+    echo $?
+}
+
+_scratch_f2fs_logstate()
+{
+    $DUMP_F2FS_PROG $SCRATCH_DEV | tee -a $seqres.full | grep -q "unmount"
+    echo $?
+}
+
+_scratch_dump_log()
+{
+	case "$FSTYP" in
+	xfs)
+		_scratch_xfs_logprint
+		;;
+	f2fs)
+		$DUMP_F2FS_PROG $SCRATCH_DEV
+		;;
+	*)
+		;;
+	esac
+}
+
+_test_dump_log()
+{
+	case "$FSTYP" in
+	xfs)
+		_test_xfs_logprint
+		;;
+	f2fs)
+		$DUMP_F2FS_PROG $TEST_DEV
+		;;
+	*)
+		;;
+	esac
+}
+
+_print_logstate()
+{
+    case "$FSTYP" in
+    xfs)
+        dirty=$(_scratch_xfs_logstate)
+        ;;
+    f2fs)
+        dirty=$(_scratch_f2fs_logstate)
+        ;;
+    *)
+        ;;
+    esac
+
+    if [ $dirty -ne 0 ]; then
+        echo "dirty log"
+    else
+        echo "clean log"
+    fi
+}
+
+_print_operation()
+{
+    mkdir $fulldir >/dev/null 2>&1
+    mntopt=`echo $MOUNT_OPTIONS | sed 's/ //g'`
+    mkfsopt=`echo $MKFS_OPTIONS | sed 's/ //g'`
+    raw=$fulldir/op.mnt$mntopt.mkfs$mkfsopt$sync_suffix.raw
+    filtered=$fulldir/op.mnt$mntopt.mkfs$mkfsopt$sync_suffix.filtered
+
+    echo "### xfs_logprint output ###" | tee $raw >$filtered
+    _scratch_xfs_logprint -c  2>&1 \
+    | tee -a $raw      \
+    | _filter_logprint \
+    | _filter_opnum    \
+    >>$filtered
+}
+
+# start at rec#2 "-s 2" so we skip over UMOUNT record which will always
+# be a 512b single header at mkfs time
+# and may not match with the FS mounted at a different LR size 
+# => xlog_do_recovery_pass() can not handle the different hdr sizes
+#    it assumes them all to be the same between the start..finish
+# NB: On IRIX there is no UMOUNT record and so we could start from -s 0.
+
+_print_transaction_inode()
+{
+    _start=$1
+    mkdir $fulldir >/dev/null 2>&1
+    mntopt=`echo $MOUNT_OPTIONS | sed 's/ //g'`
+    mkfsopt=`echo $MKFS_OPTIONS | sed 's/ //g'`
+    raw=$fulldir/trans_inode.mnt$mntopt.mkfs$mkfsopt$sync_suffix.raw
+    filtered=$fulldir/trans_inode.mnt$mntopt.mkfs$mkfsopt$sync_suffix.filtered
+
+    echo "### xfs_logprint -t -i -s START output ###" | tee $raw >$filtered
+    _scratch_xfs_logprint -t -i -s $_start 2>&1 \
+    | tee -a $raw      \
+    | _filter_logprint \
+    >>$filtered
+}
+
+_print_transaction_buf()
+{
+    _start=$1
+    mkdir $fulldir >/dev/null 2>&1
+    mntopt=`echo $MOUNT_OPTIONS | sed 's/ //g'`
+    mkfsopt=`echo $MKFS_OPTIONS | sed 's/ //g'`
+    raw=$fulldir/trans_buf.mnt$mntopt.mkfs$mkfsopt$sync_suffix.raw
+    filtered=$fulldir/trans_buf.mnt$mntopt.mkfs$mkfsopt$sync_suffix.filtered
+
+    echo "### xfs_logprint -t -b -s START output ###" | tee $raw >$filtered
+    _scratch_xfs_logprint -t -b -s $_start 2>&1 \
+    | tee -a $raw      \
+    | _filter_logprint \
+    >>$filtered
+}
+
+_mkfs_log()
+{
+    # create the FS
+    # mkfs options to append to log size otion can be specified ($*)
+    export MKFS_OPTIONS="-l size=2000b -l lazy-count=1 $*"
+    _full "mkfs"
+    _scratch_mkfs_xfs >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then 
+	_echofull "Cannot mkfs for this test using option specified: $MKFS_OPTIONS"
+	return 1
+    fi	
+
+    return 0
+}
+
+
+#
+# mount fs and create some log traffic
+#
+_create_log()
+{
+    # mount the FS
+    _full "mount"
+    _scratch_mount >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then 
+	_echofull "mount failed: $MOUNT_OPTIONS"
+	return 1
+    fi
+
+    # generate some log traffic - but not too much - life gets a little
+    # more complicated if the log wraps around. This traffic is
+    # pretty much arbitary, but could probably be made better than this.
+    touch $SCRATCH_MNT/{0,1,2,3,4,5,6,7,8,9}{0,1,2,3,4,5,6,7,8,9}
+	
+    # unmount the FS
+    _full "umount"
+    _scratch_unmount >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then 
+	_echofull "umount failed"
+	return 1
+    fi
+
+    return 0
+}
+
+#
+# mount fs and create some log traffic with sync'ing
+#
+_create_log_sync()
+{
+    # mount the FS
+    _full " mount"
+    _scratch_mount >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then 
+	_echofull "mount failed: $MOUNT_OPTIONS"
+	return 1
+    fi
+
+    # generate some log traffic - but not too much
+    # add some syncs to get the log flushed to disk 
+    for file in $SCRATCH_MNT/{0,1,2,3,4,5,6,7,8,9}{0,1,2,3,4,5,6,7,8,9}; do
+	touch $file
+	sync
+    done
+
+    # unmount the FS
+    _full "umount"
+    _scratch_unmount >>$seqres.full 2>&1
+    if [ $? -ne 0 ] ; then 
+	_echofull "umount failed"
+	return 1
+    fi
+}
+
+_cmp_output()
+{
+    echo "*** compare logprint: $1 with $2"
+    if ! diff $1 $2 >/dev/null; then
+	_fail "logprint output $1 differs to $2"
+    fi
+}
+
+#
+# Op data of different Log Record sizes will mean that data is
+# split at different points and in op printing it will not
+# try and decode the data which has been split up.
+# So we do a special diff processing to complain of differences
+# if no split is involved.
+#
+# Example diff with forms of:
+# "Left over region from split log item"
+# "Not printing rest of data"
+#
+#   2149c2149
+#   < Left over region from split log item
+#   ---
+#   > BUF DATA
+#   2888c2888,2889
+#   < INODE: #regs: 3 Not printing rest of data
+#   ---
+#   > INODE: #regs: 3 ino: 0x80 flags: 0x5 dsize: 16
+#   >  blkno: <BLKNO> len:<LEN> boff: <BOFF>
+#
+_process_op_diff()
+{
+    $AWK_PROG <$1 '
+	BEGIN { num_splits = 1; max_splits = 50 }
+	/^[0-9]/ {
+
+		# ensure a split happened in previous difference
+		if (num_splits < 1 || num_splits > max_splits) {
+			print num_splits, " split(s) found prior to diff cmd: ", $0
+			num_splits = 1 # shut-up end condition
+			exit 1
+		}
+		num_splits = 0
+
+		next
+	}
+	/Left over region/ || /Not printing rest/ { 
+		num_splits++
+		next
+	}
+	{ next }
+	END { 
+		if (num_splits < 1 || num_splits > max_splits) {
+			print num_splits, " split(s) found prior to diff end"
+			exit 1
+		}
+	}
+    '
+    return $?
+}
+
+_cmp_op_output()
+{
+    echo "*** compare logprint: $1 with $2"
+
+    diff $1 $2 >$filtered.diff
+    if ! _process_op_diff $filtered.diff
+    then
+	_fail "logprint output $1 differs to $2 considering splits"
+    fi
+}
+
+# return xfs log version of device
+# e.g.
+#   _log_version /dev/dsk/dks0d1s4
+#
+_log_version()
+{
+    _dev=$1 
+    vers=`xfs_db -c 'sb 0' -c 'p versionnum' -r $_dev | $AWK_PROG '{print $3}'`
+    logver=`echo $vers | sed -e 's/0x[0-9a-f]\([0-9a-f]\)[0-9a-f][0-9a-f]/\1/'` 
+    if [ $logver = 4 -o $logver = 5 -o $logver = 6 -o $logver = 7 -o \
+         $logver = c -o $logver = d -o $logver = e -o $logver = f ]; then
+	echo 2
+    else
+	echo 1
+    fi
+}
+
+_require_v2log()
+{
+    # test out mkfs to see if it supports "-l version=2"
+    export MKFS_OPTIONS="-l version=2"
+    if ! _scratch_mkfs_xfs >>$seqres.full 2>&1; then
+        _notrun "mkfs does not support v2 logs"
+    fi
+
+    # test out mount to see if it mounts a v2 log fs
+    export MOUNT_OPTIONS="-o logbsize=32k"
+    if ! _scratch_mount >>$seqres.full 2>&1; then
+        _notrun "mount/kernel does not support v2 logs"
+    fi
+
+    # check after unmount to see if it is clean
+    # i.e. it is not a 6.5.25 buggy version checking kernel
+    touch $SCRATCH_MNT/file
+    _scratch_unmount >>$seqres.full 2>&1
+    if _scratch_xfs_logprint -t | tee -a $seqres.full \
+        | head | grep -q "<DIRTY>"; then
+        _notrun "kernel does not support v2 logs"
+    fi
+ 
+    # otherwise presume it does support v2 logs...:)
+}
+
+_require_logstate()
+{
+    case "$FSTYP" in
+    xfs)
+        if [ -z "$XFS_LOGPRINT_PROG" ]; then
+            _notrun "This test requires xfs_logprint utility."
+        fi
+        ;;
+    f2fs)
+        if [ -z "$DUMP_F2FS_PROG" ]; then
+            _notrun "This test requires dump.f2fs utility."
+        fi
+        ;;
+    *)
+        _notrun "$FSTYP does not support log state probing."
+        ;;
+    esac
+}
+
+_xfs_log_config()
+{
+    echo "# mkfs-opt             mount-opt"
+    echo "# ------------------------------"
+    echo "  version=2            logbsize=32k"
+    echo "  version=2,su=4096    logbsize=32k"
+    echo "  version=2,su=32768   logbsize=32k"
+    echo "  version=2,su=32768   logbsize=64k"
+    echo "  version=2            logbsize=64k"
+    echo "  version=2,su=64k     logbsize=64k"
+    echo "  version=2            logbsize=128k"
+    echo "  version=2,su=128k    logbsize=128k"
+    echo "  version=2            logbsize=256k"
+    echo "  version=2,su=256k    logbsize=256k"
+}
+
+_f2fs_log_config()
+{
+    echo "# mkfs-opt             mount-opt"
+    echo "# ------------------------------"
+    echo "  test1     active_logs=6,background_gc=off"
+    echo "  test2     active_logs=6,background_gc=off,inline_data"
+    echo "  test3     active_logs=6,background_gc=off,inline_dentry"
+    echo "  test4     active_logs=6,background_gc=off,inline_data,inline_dentry"
+    echo "  test5     active_logs=6,background_gc=off,disable_roll_forward"
+    echo "  test6     active_logs=6,background_gc=off,discard,inline_data,inline_dentry"
+    echo "  test7     active_logs=6,background_gc=on"
+    echo "  test8     active_logs=6,background_gc=on,inline_data"
+    echo "  test9     active_logs=6,background_gc=on,inline_data,inline_dentry"
+    echo "  test10    active_logs=6,background_gc=on,discard,inline_data,inline_dentry"
+}
+
+_get_log_configs()
+{
+    case "$FSTYP" in
+    xfs)
+        _xfs_log_config
+        ;;
+    f2fs)
+        _f2fs_log_config
+        ;;
+    *)
+        _notrun "$FSTYP does not support log configs."
+        ;;
+    esac
+}
+
+# make sure this script returns success
+/bin/true

@@ -1,0 +1,61 @@
+#! /bin/bash
+# FS QA Test No. 040
+#
+# srcdiff test
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+[ -z "$KWORKAREA" ] && \
+	_notrun "Can't run srcdiff without KWORKAREA set"
+[ -d "$KWORKAREA/fs/xfs" ] || \
+	_notrun "Can't find XFS source under \"$KWORKAREA\""
+
+[ -z "$WORKAREA" ] && \
+	_notrun "Can't run srcdiff without WORKAREA set"
+[ -f "$WORKAREA/xfstests/tools/srcdiff" ] || \
+	_notrun "Can't find srcdiff tool under \"$WORKAREA\""
+[ -d "$WORKAREA/xfsprogs/include" ] || \
+	_notrun "Can't find XFS command headers under \"$WORKAREA\""
+
+# real QA test starts here
+cd "$WORKAREA/xfstests"
+echo Silence is golden.
+perl tools/srcdiff -q >$seqres.full
+if ! diff $seqres.full $seq.good >/dev/null; then
+    echo "FAILED: srcdiff output $seqres.full differs to $seq.good"
+    exit 1
+fi
+
+# success, all done
+status=0
+exit

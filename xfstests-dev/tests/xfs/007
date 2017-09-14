@@ -1,0 +1,105 @@
+#! /bin/bash
+# FS QA Test No. xfs/007
+#
+# Test to verify Q_XQUOTARM functionality.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2014 Red Hat, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/quota
+
+# Modify as appropriate.
+_supported_fs xfs
+_supported_os Linux Irix
+
+_require_scratch
+_require_xfs_quota
+
+rm -f $seqres.full
+
+_scratch_mkfs_xfs | _filter_mkfs > /dev/null 2> $tmp.mkfs
+. $tmp.mkfs
+
+do_test()
+{
+	qino_1=$1
+	qino_2=$2
+	off_opts=$3
+
+	echo "*** umount"
+	_scratch_unmount
+
+	QINO_1=`xfs_db -c "sb 0" -c "p" $SCRATCH_DEV | \
+			grep $qino_1 | awk '{print $NF}'`
+	QINO_2=`xfs_db -c "sb 0" -c "p" $SCRATCH_DEV | \
+			grep $qino_2 | awk '{print $NF}'`
+
+	echo "*** Usage before quotarm ***"
+	xfs_db -c "inode $QINO_1" -c "p core.nblocks" $SCRATCH_DEV
+	xfs_db -c "inode $QINO_2" -c "p core.nblocks" $SCRATCH_DEV
+
+	_qmount
+	echo "*** turn off $off_opts quotas"
+	xfs_quota -x -c "off -$off_opts" $SCRATCH_MNT
+	xfs_quota -x -c "remove -$off_opts" $SCRATCH_MNT
+	echo "*** umount"
+	_scratch_unmount
+
+	echo "*** Usage after quotarm ***"
+	xfs_db -c "inode $QINO_1" -c "p core.nblocks" $SCRATCH_DEV
+	xfs_db -c "inode $QINO_2" -c "p core.nblocks" $SCRATCH_DEV
+}
+
+
+# Test user and group first
+_qmount_option "uquota,gquota"
+_qmount
+do_test uquotino gquotino ug
+
+# Test user and project. Note that pquotino only exists on v5 (crc=1)
+# superblocks. Older supers reuse gquotino.
+PQUOTINO=pquotino
+if [ $_fs_has_crcs == 0 ]; then
+	PQUOTINO=gquotino
+fi
+_qmount_option "uquota,pquota"
+_qmount
+_require_prjquota $SCRATCH_DEV
+do_test uquotino $PQUOTINO up
+
+# success, all done
+status=0
+exit

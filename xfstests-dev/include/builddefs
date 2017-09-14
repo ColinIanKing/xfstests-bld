@@ -1,0 +1,98 @@
+#
+# Copyright (c) 2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# include/builddefs.  Generated from builddefs.in by configure.
+#
+
+ifndef _BUILDDEFS_INCLUDED_
+_BUILDDEFS_INCLUDED_ = 1
+
+DEBUG = -DDEBUG
+OPTIMIZER = -g -O2
+MALLOCLIB = 
+LOADERFLAGS =  -static -L/home/king/xfstests-bld/bld/lib
+CFLAGS = -g -O2 -I/home/king/xfstests-bld/bld/include -fno-stack-protector
+CPPFLAGS = -I/home/king/xfstests-bld/bld/include
+
+HAVE_LIBXFS = false
+HAVE_XLOG_ASSIGN_LSN = false
+LIBXFS = @libxfs@
+LIBACL = -lacl
+LIBATTR = -lattr
+LIBGDBM = 
+LIBUUID = -luuid
+LIBHANDLE = -lhandle
+LIBDM = -ldm
+LIBTEST = $(TOPDIR)/lib/libtest.la
+
+PKG_NAME        = xfstests
+PKG_USER        = king
+PKG_GROUP       = king
+PKG_RELEASE     = 1
+PKG_VERSION     = 1.1.1
+PKG_PLATFORM    = linux
+PKG_DISTRIBUTION= Linux
+PKG_SBIN_DIR    = ${exec_prefix}/sbin
+# A bit of a hack; by rights only state should probably go here
+# But for now ...
+PKG_LIB_DIR     = /var/lib/xfstests
+
+CC              = gcc
+AWK             = /usr/bin/awk
+SED             = /bin/sed
+TAR             = /bin/tar
+ZIP             = /bin/gzip
+MAKE            = /usr/bin/make
+ECHO            = /bin/echo
+SORT            = /usr/bin/sort
+LN_S            = ln -s
+SHELL		= /bin/bash
+LIBTOOL         = /usr/bin/libtool
+MAKEDEPEND      = gcc -MM
+
+MSGFMT          = 
+MSGMERGE        = 
+
+RPM             = 
+RPMBUILD        = 
+RPM_VERSION     = 0
+
+ENABLE_SHARED = @enable_shared@
+HAVE_DB = false
+HAVE_AIO = true
+HAVE_FALLOCATE = true
+HAVE_SSL = false
+HAVE_DMAPI = false
+HAVE_ATTR_LIST = true
+HAVE_FIEMAP = true
+HAVE_FALLOCATE = true
+
+GCCFLAGS = -funsigned-char -fno-strict-aliasing -Wall
+
+ifeq ($(PKG_PLATFORM),linux)
+PCFLAGS = -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 $(GCCFLAGS)
+endif
+ifeq ($(PKG_PLATFORM),darwin)
+PCFLAGS = -traditional-cpp $(GCCFLAGS)
+endif
+ifeq ($(PKG_PLATFORM),irix)
+PCFLAGS = -nostdinc -I$(ROOT)/usr/include -I$(TOPDIR)/../irix/include
+endif
+ifeq ($(PKG_PLATFORM),freebsd)
+endif
+
+GCFLAGS = $(OPTIMIZER) $(DEBUG) $(CPPFLAGS) \
+	-I$(TOPDIR)/include -DVERSION=\"$(PKG_VERSION)\"
+
+# Global, Platform, Local CFLAGS
+CFLAGS += $(GCFLAGS) $(PCFLAGS) $(LCFLAGS)
+
+include $(TOPDIR)/include/buildmacros
+
+endif
+
+#
+# For targets that should always be rebuilt,
+# define a target that is never up-to-date.
+# Targets needing this should depend on $(_FORCE)
+_FORCE = __force_build

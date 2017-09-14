@@ -1,0 +1,701 @@
+##/bin/bash
+#
+# Copyright (c) 2007 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#
+# common functions for excersizing hole punches with extent size hints etc.
+
+# source dmap_scratch_mount etc.
+. ./common/dmapi
+
+_spawn_test_file() {
+	echo "# spawning test file with $*"
+	local blksize=$1
+	local file_size=`expr $2 \* $blksize`
+	local extent_size_hint=`expr $3 \* $blksize`
+	local test_file=$4
+	local reserve_space=$5
+
+	if [ $extent_size_hint -ne 0 ]; then
+		echo "+ setting extent size hint to $extent_size_hint"
+		$XFS_IO_PROG -f \
+		-c "extsize $extent_size_hint" \
+		$test_file
+	fi
+	# print extent size hint for $test_file
+	$XFS_IO_PROG -f \
+	-c "extsize" \
+	$test_file
+
+	if [ "$reserve_space" == "noresv" ]; then
+		echo "+ not using resvsp at file creation"
+		$XFS_IO_PROG -f \
+		-c "truncate $file_size" \
+		$test_file
+	else
+		$XFS_IO_PROG -f \
+		-c "truncate $file_size" \
+		-c "resvsp 0 $file_size" \
+		$test_file
+	fi
+}
+
+_do_punch() {
+	echo "# punching with $*"
+	# punch or bite the ear off $test_file to create a hole
+	local blksize=$1
+	local punch_offset=`expr $2 \* $blksize`
+	local punch_size=`expr $3 \* $blksize`
+	local punch_type=$4		# u for unresvsp, d for dm_punch
+	local test_file=$5
+
+	if [ "$punch_type" == "u" ]; then
+		echo "+ hole punch using unresvsp"
+		$XFS_IO_PROG -f \
+		-c "unresvsp $punch_offset $punch_size" \
+		$test_file
+	fi
+	if [ "$punch_type" == "d" ]; then
+		echo "+ hole punch using dmapi punch_hole"
+		${DMAPI_QASUITE1_DIR}cmd/punch_hole -o $punch_offset -l $punch_size \
+			${SCRATCH_MNT}/$test_file
+	fi
+}
+
+_do_write() {
+	echo "# writing with $*"
+	local blksize=$1
+	local write_offset=`expr $2 \* $blksize`
+	local write_size=`expr $3 \* $blksize`
+	local test_file=$4
+
+	$XFS_IO_PROG -f \
+	-c "pwrite $write_offset $write_size" \
+	$test_file >/dev/null
+}
+
+_do_bmap() {
+	echo "# showing file state $*"
+	local test_file=$1
+
+	$XFS_IO_PROG -f \
+	-c "bmap -vvp" \
+	$test_file
+}
+
+_test_punch() {
+	echo "# testing $* ..."
+	local blksize=$1
+	# all points and sizes below are in terms of filesystem blocks
+	local extsize_hint_blks=$2		# extent size hint in FS blocks, 0=do not set
+	local file_size_blks=$3			# the file size in blocks
+	local punch_points_blks=( $4 )	# array of places to punch holes in the file
+	local punch_sizes_blks=( $5 )	# array of size of each punch in blocks
+	local punch_types=( $6	)		# array of u=unresvsp or d=dm_punch
+	local write_points_blks=( $7 )	# array of places to pwrite in the file
+	local write_sizes_blks=( $8 )	# array of size of each write
+
+	local punch_write_order=( $9 )	# array of punch/write operation order
+									# e.g. "w p w w p" means: do 1st write...
+									# then 1st punch, 2nd & 3rd write, 2nd punch
+	local resvsp=${10}				# if "noresv" then don't resvsp on file create
+	local filename=punch_test_file
+
+	cd /
+	_scratch_unmount >/dev/null 2>&1
+
+	_scratch_mkfs_xfs -bsize=$blksize >/dev/null 2>&1 \
+		|| _fail "mkfs failed"
+
+	local this_punch_type=""
+	local dmap_punch_used=0
+	for this_punch_type in "${punch_types[@]}"; do
+		[ "$this_punch_type" == "d" ] && dmap_punch_used=1
+	done
+	if [ $dmap_punch_used -ne 0 ]; then
+		# a punch type of dm_punch has been specified, do a dmapi mount
+		echo "+ mounting with dmapi enabled"
+		_dmapi_scratch_mount
+	else
+		# only unresvsp punch type is used, just do a normal mount
+		_scratch_mount || _fail "mount failed"
+	fi
+
+	cd $SCRATCH_MNT
+
+	# check a size is specified for each punch
+	[ ${#punch_points_blks[*]} -eq ${#punch_sizes_blks[*]} ] \
+		|| _fail "num punch points given does not equal num punch sizes"
+
+	# check a type is specified for each punch
+	[ ${#punch_points_blks[*]} -eq ${#punch_types[*]} ] \
+		|| _fail "num punch points given does not equal num punch types"
+
+	# check a size is specified for each write
+	[ ${#write_points_blks[*]} -eq ${#write_sizes_blks[*]} ] \
+		|| _fail "num write points given does not equal num write sizes"
+
+	# check punch_write_order operations match number of punches + writes
+	local total_pw_operations=`expr ${#punch_points_blks[*]} + ${#write_points_blks[*]}`
+	[ $total_pw_operations -eq ${#punch_write_order[*]} ] \
+		|| _fail "punch_write_order ops doesn't match number of punches + writes"
+
+	# create the file and setup extent size hint
+	_spawn_test_file $blksize $file_size_blks $extsize_hint_blks $filename $resvsp
+
+	# do the writes and punches
+	local operation=""
+	local punch_index=0
+	local write_index=0
+	for operation in "${punch_write_order[@]}"; do
+		if [ "$operation" == "p" ]; then
+			_do_punch $blksize ${punch_points_blks[$punch_index]} \
+				${punch_sizes_blks[$punch_index]} ${punch_types[$punch_index]} \
+				$filename
+			punch_index=`expr $punch_index + 1`
+		fi
+		if [ "$operation" == "w" ]; then
+			_do_write $blksize ${write_points_blks[$write_index]} \
+				${write_sizes_blks[$write_index]} $filename
+			write_index=`expr $write_index + 1`
+		fi
+		sync
+		_do_bmap $filename		# print out the state of the file
+	done
+}
+
+_coalesce_extents()
+{
+	awk -F: '
+	{
+		range = $2;
+		type = $3;
+
+		split(range, bounds, "[\\[ \\.\\]]");
+		low = bounds[3];
+		high = bounds[5];
+
+		if (type != prev_type) {
+			if (prev_type != "")
+				printf("%u]:%s\n", low - 1, prev_type);
+			printf("%u: [%u..", out_count++, low);
+			prev_type = type;
+		}
+	}
+	END {
+		if (prev_type != "")
+			printf("%u]:%s\n", high, prev_type);
+	}'
+}
+
+_filter_fiemap()
+{
+	$AWK_PROG '
+		$3 ~ /hole/ {
+			print $1, $2, $3;
+			next;
+		}
+		$5 ~ /0x[[:xdigit:]]*8[[:xdigit:]][[:xdigit:]]/ {
+			print $1, $2, "unwritten";
+			next;
+		}
+		$5 ~ /0x[[:xdigit:]]+/ {
+			print $1, $2, "data";
+		}' |
+	_coalesce_extents
+}
+
+_filter_fiemap_flags()
+{
+	$AWK_PROG '
+		$3 ~ /hole/ {
+			print $1, $2, $3;
+			next;
+		}
+		$5 ~ /0x[[:xdigit:]]*8[[:xdigit:]][[:xdigit:]]/ {
+			print $1, $2, "unwritten";
+			next;
+		}
+		$5 ~ /0x[[:xdigit:]]+/ {
+			print $1, $2, $5;
+		}' |
+	_coalesce_extents
+}
+
+# Filters fiemap output to only print the 
+# file offset column and whether or not
+# it is an extent or a hole
+_filter_hole_fiemap()
+{
+	$AWK_PROG '
+		$3 ~ /hole/ {
+			print $1, $2, $3; 
+			next;
+		}   
+		$5 ~ /0x[[:xdigit:]]+/ {
+			print $1, $2, "extent";
+		}' |
+	_coalesce_extents
+}
+
+#     10000 Unwritten preallocated extent
+#     01000 Doesn't begin on stripe unit
+#     00100 Doesn't end   on stripe unit
+#     00010 Doesn't begin on stripe width
+#     00001 Doesn't end   on stripe width
+_filter_bmap()
+{
+	awk '
+		$3 ~ /hole/ {
+			print $1, $2, $3;
+			next;
+		}
+		$7 ~ /1[01][01][01][01]/ {
+			print $1, $2, "unwritten";
+			next;
+		}
+		$7 ~ /0[01][01][01][01]/ {
+			print $1, $2, "data"
+		}' |
+	_coalesce_extents
+}
+
+die_now()
+{
+	status=1
+	exit
+}
+
+# test the different corner cases for zeroing a range:
+#
+#	1. into a hole
+#	2. into allocated space
+#	3. into unwritten space
+#	4. hole -> data
+#	5. hole -> unwritten
+#	6. data -> hole
+#	7. data -> unwritten
+#	8. unwritten -> hole
+#	9. unwritten -> data
+#	10. hole -> data -> hole
+#	11. data -> hole -> data
+#	12. unwritten -> data -> unwritten
+#	13. data -> unwritten -> data
+#	14. data -> hole @ EOF
+#	15. data -> hole @ 0
+#	16. data -> cache cold ->hole
+#	17. data -> hole in single block file
+#
+# Test file is removed, created and sync'd between tests.
+#
+# Use -k flag to keep the file between tests.  This will
+# test the handling of pre-existing holes.
+#
+# Use the -d flag to not sync the file between tests.
+# This will test the handling of delayed extents
+#
+# Use the -u flag to not run unwritten tests.
+# This will eliminate some unnecessary information.
+#
+_test_generic_punch()
+{
+
+	remove_testfile=1
+	sync_cmd="-c fsync"
+	unwritten_tests=1
+	OPTIND=1
+	while getopts 'dku' OPTION
+	do
+		case $OPTION in
+		k)	remove_testfile=
+		;;
+		d)	sync_cmd=
+		;;
+		u)	unwritten_tests=
+		;;
+		?)	echo Invalid flag
+		exit 1
+		;;
+		esac
+	done
+	shift $(($OPTIND - 1))
+
+	alloc_cmd=$1
+	punch_cmd=$2
+	zero_cmd=$3	#if not testing zero just set to punch
+	map_cmd=$4
+	filter_cmd=$5
+	testfile=$6
+	multiple=1
+
+	#
+	# If we are testing collapse range, we increare all the offsets of this
+	# test by a factor of 4. We do this because unlike punch, collapse
+	# range also decreases the size of file hence require bigger offsets.
+	#
+	if [ "$zero_cmd" == "fcollapse" ]; then
+		multiple=4
+	fi
+
+	_4k="$((multiple * 4))k"
+	_8k="$((multiple * 8))k"
+	_12k="$((multiple * 12))k"
+	_20k="$((multiple * 20))k"
+
+	# initial test state must be defined, otherwise the first test can fail
+	# due ot stale file state left from previous tests.
+	rm -f $testfile
+
+	echo "	1. into a hole"
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "$zero_cmd $_4k $_8k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	echo "	2. into allocated space"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite 0 $_20k" $sync_cmd \
+		-c "$zero_cmd $_4k $_8k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	if [ "$unwritten_tests" ]; then
+		echo "	3. into unwritten space"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd 0 $_20k" \
+			-c "$zero_cmd $_4k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+	fi
+
+	echo "	4. hole -> data"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite $_8k $_8k" $sync_cmd \
+		-c "$zero_cmd $_4k $_8k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	if [ "$unwritten_tests" ]; then
+		echo "	5. hole -> unwritten"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd $_8k $_8k" \
+			-c "$zero_cmd $_4k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+	fi
+
+	echo "	6. data -> hole"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite 0 $_8k" $sync_cmd \
+		 -c "$zero_cmd $_4k $_8k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	if [ "$unwritten_tests" ]; then
+		echo "	7. data -> unwritten"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "pwrite 0 $_8k" $sync_cmd \
+			-c "$alloc_cmd $_8k $_8k" \
+			-c "$zero_cmd $_4k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+
+		echo "	8. unwritten -> hole"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd 0 $_8k" \
+			-c "$zero_cmd $_4k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+
+		echo "	9. unwritten -> data"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd 0 $_8k" \
+			-c "pwrite $_8k $_8k" $sync_cmd \
+			-c "$zero_cmd $_4k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+	fi
+
+	echo "	10. hole -> data -> hole"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite $_8k $_4k" $sync_cmd \
+		-c "$zero_cmd $_4k $_12k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	echo "	11. data -> hole -> data"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "$alloc_cmd 0 $_20k" \
+		-c "pwrite 0 $_8k" \
+		-c "pwrite $_12k $_8k" $sync_cmd \
+		-c "$punch_cmd $_8k $_4k" \
+		-c "$zero_cmd $_4k $_12k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	if [ "$unwritten_tests" ]; then
+		echo "	12. unwritten -> data -> unwritten"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd 0 $_20k" \
+			-c "pwrite $_8k $_4k" $sync_cmd \
+			-c "$zero_cmd $_4k $_12k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+
+		echo "	13. data -> unwritten -> data"
+		if [ "$remove_testfile" ]; then
+			rm -f $testfile
+		fi
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "$alloc_cmd 0 $_20k" \
+			-c "pwrite 0k $_4k" $sync_cmd \
+			-c "pwrite $_12k $_8k" -c "fsync" \
+			-c "$zero_cmd $_4k $_12k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+	fi
+
+	# Don't need to check EOF case for collapse range.
+	# VFS layer return invalid error in this case,
+	# So it is not a proper case for collapse range test of each local fs.
+	if [ "$zero_cmd" != "fcollapse" ]; then
+		echo "	14. data -> hole @ EOF"
+		rm -f $testfile
+		$XFS_IO_PROG -f -c "truncate $_20k" \
+			-c "pwrite 0 $_20k" $sync_cmd \
+			-c "$zero_cmd $_12k $_8k" \
+			-c "$map_cmd -v" $testfile | $filter_cmd
+		[ $? -ne 0 ] && die_now
+		_md5_checksum $testfile
+	fi
+
+	if [ "$zero_cmd" == "fcollapse" ]; then
+		echo "	14. data -> hole @ 0"
+	else
+		echo "	15. data -> hole @ 0"
+	fi
+
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite 0 $_20k" $sync_cmd \
+		-c "$zero_cmd 0 $_8k" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	[ $? -ne 0 ] && die_now
+	_md5_checksum $testfile
+
+	# If zero_cmd is fcollpase, don't check unaligned offsets
+	if [ "$zero_cmd" == "fcollapse" ]; then
+		return
+	fi
+
+	# If zero_cmd is finsert, don't check unaligned offsets
+	if [ "$zero_cmd" == "finsert" ]; then
+		return
+	fi
+
+	echo "	16. data -> cache cold ->hole"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+		rm -f $testfile.2
+	else
+		cp $testfile $testfile.2
+	fi
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite $_8k $_12k" -c "fsync" $testfile.2 \
+		> /dev/null
+	$XFS_IO_PROG -f -c "truncate $_20k" \
+		-c "pwrite 0 $_20k" $sync_cmd \
+		-c "$zero_cmd 0k $_8k" \
+		-c "fadvise -d" \
+		-c "$map_cmd -v" $testfile | $filter_cmd
+	diff $testfile $testfile.2
+	[ $? -ne 0 ] && die_now
+	rm -f $testfile.2
+	_md5_checksum $testfile
+
+	# different file sizes mean we can't use md5sum to check the hole is
+	# valid. Hence use hexdump to dump the contents and chop off the last
+	# line of output that indicates the file size. We also have to fudge
+	# the extent size as that will change with file size, too - that's what
+	# the sed line noise does - it will always result in an output of [0..7]
+	# so it matches 4k block size...
+	echo "	17. data -> hole in single block file"
+	if [ "$remove_testfile" ]; then
+		rm -f $testfile
+	fi
+	block_size=`get_block_size $TEST_DIR`
+	$XFS_IO_PROG -f -c "truncate $block_size" \
+		-c "pwrite 0 $block_size" $sync_cmd \
+		-c "$zero_cmd 128 128" \
+		-c "$map_cmd -v" $testfile | $filter_cmd | \
+			 sed -e "s/\.\.[0-9]*\]/..7\]/"
+	[ $? -ne 0 ] && die_now
+	od -x $testfile | head -n -1
+}
+
+_test_block_boundaries()
+{
+
+	remove_testfile=1
+	sync_cmd="-c fsync"
+	unwritten_tests=1
+	OPTIND=1
+	while getopts 'dk' OPTION
+	do
+		case $OPTION in
+		k)	remove_testfile=
+		;;
+		d)	sync_cmd=
+		;;
+		?)	echo Invalid flag
+		exit 1
+		;;
+		esac
+	done
+	shift $(($OPTIND - 1))
+
+	bs=$1
+	zero_cmd=$2
+	filter_cmd=$3
+	testfile=$4
+
+	# Block size plus 1
+	bs_p1=$(($bs + 1))
+	# Block size plus 2
+	bs_p2=$(($bs + 2))
+
+	# Block size minus 1
+	bs_m1=$(($bs - 1))
+
+	# Block size multiplied by 2
+	bs_t2=$(($bs * 2))
+
+	# Block size divided by 2
+	bs_d2=$(($bs / 2))
+
+	echo "zero 0, 1"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd 0 1" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero 0, $bs_m1"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd 0 $bs_m1" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero 0, $bs"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd 0 $bs" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero 0, $bs_p1"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd 0 $bs_p1" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero $bs_m1, $bs"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd $bs_m1 $bs" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero $bs_m1, $bs_p1"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd $bs_m1 $bs_p1" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+	echo "zero $bs_m1, $bs_p2"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd $bs_m1 $bs_p2" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+
+	echo "zero $bs, $bs"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd $bs $bs" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+
+
+	echo "zero $bs_d2 , $bs"
+	$XFS_IO_PROG -f -t -c "pwrite -S 0x41 0 $bs" \
+			   -c "pwrite -S 0x42 $bs $bs" \
+			   -c "$zero_cmd $bs_d2 $bs" \
+			   -c "pread -v 0 $bs_t2" \
+			   $testfile | $filter_cmd
+}

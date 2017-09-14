@@ -1,0 +1,73 @@
+#! /bin/bash
+# FS QA Test No. 007
+#
+# drive the src/nametest program
+# which does a heap of open(create)/unlink/stat
+# and checks that error codes make sense with its
+# memory of the files created.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $tmp.*
+    rm -rf $TEST_DIR/$seq
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os IRIX Linux
+_require_test
+
+status=1 # default failure 
+sourcefile=$tmp.nametest
+seed=1
+iterations=100000
+num_filenames=100
+
+# need to create an input file with a list of
+# filenames on each line 
+i=1
+while [ $i -le $num_filenames ]; do
+  echo "nametest.$i" >>$sourcefile
+  let i=$i+1
+done
+
+mkdir $TEST_DIR/$seq
+cd $TEST_DIR/$seq
+$here/src/nametest -l $sourcefile -s $seed -i $iterations -z
+
+# success, all done
+status=0
+exit

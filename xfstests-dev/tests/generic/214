@@ -1,0 +1,151 @@
+#! /bin/bash
+# FS QA Test No. 214
+#
+# Basic unwritten extent sanity checks
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2009 Red Hat, Inc. All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+_cleanup()
+{
+	rm -f $TEST_DIR/ouch*
+	cd /
+	rm -f $tmp.*
+}
+
+here=`pwd`
+tmp=$TEST_DIR/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+# generic, but xfs_io's fallocate must work
+_supported_fs generic
+# only Linux supports fallocate
+_supported_os Linux
+_require_test
+
+[ -n "$XFS_IO_PROG" ] || _notrun "xfs_io executable not found"
+
+rm -f $seqres.full
+rm -f $TEST_DIR/ouch*
+
+_require_xfs_io_command "falloc"
+_require_odirect
+
+# Ok, off we go.
+
+# We don't remove files after they are written to check
+# for subsequent fs corruption at the end
+rm -f $TEST_DIR/test214-*
+
+# Super-trivial; preallocate a region and read it; get 0s.
+echo "=== falloc & read  ==="
+$XFS_IO_PROG -f 		\
+	-c 'falloc 0 4096'	\
+	-c 'pread -v 0 4096'	\
+	$TEST_DIR/test214-1 | _filter_xfs_io_unique
+
+# Preallocate a chunk, write 1 byte, read it all back.
+# Should get no stale data.  Early ext4 bug.
+
+echo "=== falloc, write beginning, read ==="
+$XFS_IO_PROG -f 		\
+	-c 'falloc 0 512'	\
+	-c 'pwrite 0 1'		\
+	-c 'pread -v 0 512'	\
+	$TEST_DIR/test214-2 | _filter_xfs_io_unique
+
+# Same but write in the middle of the region
+echo "=== falloc, write middle, read ==="
+$XFS_IO_PROG -f 		\
+	-c 'falloc 0 512'	\
+	-c 'pwrite 256 1'	\
+	-c 'pread -v 0 512'	\
+	$TEST_DIR/test214-3 | _filter_xfs_io_unique
+
+# Same but write the end of the region
+echo "=== falloc, write end, read ==="
+$XFS_IO_PROG -f			\
+	-c 'falloc 0 512'	\
+	-c 'pwrite 511 1'	\
+	-c 'pread -v 0 512'	\
+	$TEST_DIR/test214-4 | _filter_xfs_io_unique
+
+# Reported by IBM on ext4.
+#
+# Fixed by commit a41f20716975910d9beb90b7efc61107901492b8
+#
+# The file was previously preallocated, and then initialized the middle of
+# the preallocation area using Direct IO write, then overwrite part of
+# initialized area. Later after truncate the file (to the middle of the
+# initialized data), the initialized data *before* the new file size was
+# gone after remount the filesystem.
+
+echo "=== falloc, write, sync, truncate, read ==="
+# Allocate, write, sync, truncate (buffered)
+$XFS_IO_PROG -f					\
+	-c 'falloc         0x0     0x65C00'	\
+	-c 'pwrite -S 0xAA 0x12000 0x10000'	\
+	-c 'fsync'				\
+	-c 'truncate 0x16000'			\
+	$TEST_DIR/test214-5 | _filter_xfs_io_unique
+
+# now do a direct read and see what's on-disk
+$XFS_IO_PROG -f -d				\
+	-c 'pread -v 0 0x16000'			\
+	$TEST_DIR/test214-5 | _filter_xfs_io_unique
+
+# Reported by Ted Ts'o on linux-ext4, 12/31/2009
+# double-allocation on ext4 when fallocating over delalloc blocks
+# Regression due to d21cd8f163ac44b15c465aab7306db931c606908
+
+echo "=== delalloc write 16k; fallocate same range ==="
+# delalloc write 16k, fallocate same range.
+# Should get caught on fsck when we're done.
+
+$XFS_IO_PROG -f					\
+	-c "pwrite 0 16k"			\
+	-c "falloc 0 16k"			\
+	-c "fsync"				\
+	$TEST_DIR/test214-6 | _filter_xfs_io_unique
+
+# Another ext4 failure
+
+echo "=== ext4 testcase 2 ==="
+
+$XFS_IO_PROG -f \
+        -c "fsync"                      \
+        -c "pwrite 551917 41182"        \
+        -c "falloc 917633 392230"       \
+        -c "pwrite 285771 77718"        \
+        -c "pwrite 1136718 104115"      \
+        $TEST_DIR/test214-7 | _filter_xfs_io_unique
+
+# success, all done
+status=0
+exit

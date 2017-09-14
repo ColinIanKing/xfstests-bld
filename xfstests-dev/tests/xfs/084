@@ -1,0 +1,78 @@
+#! /bin/bash
+# FS QA Test No. 084
+#
+# Exercises unwritten extent reads and writes, looking
+# for data corruption (zeroes read) near the end of file.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_filter_resv()
+{
+	_filter_test_dir | sed -e 's/[0-9][0-9]* bytes/NUM bytes/g'
+}
+
+pgsize=`$here/src/feature -s`
+
+# -i == number of iterations
+# -l == bytes to leak on each iteration
+# -b == read/write block size
+# -s == preallocation size
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+_require_test
+
+if [ $HOSTOS == "IRIX" ]; then 
+    if uname -R | grep -iq debug; then 
+        # taking up to 23 mins on my 512K octane on debug
+        # not worth worrying about
+	_notrun "don't bother running on debug IRIX"
+    fi
+fi
+
+echo
+echo "*** First case - I/O blocksize same as pagesize"
+$here/src/resvtest -i 20 -b $pgsize "$TEST_DIR/resv" | _filter_resv
+[ $? -eq 0 ] && echo done
+rm -f "$TEST_DIR/mumble"
+
+echo
+echo "*** Second case - 512 byte I/O blocksize"
+$here/src/resvtest -i 40 -b 512 "$TEST_DIR/resv" | _filter_resv
+[ $? -eq 0 ] && echo done
+rm -f "$TEST_DIR/grumble"
+
+# success, all done
+status=0
+exit

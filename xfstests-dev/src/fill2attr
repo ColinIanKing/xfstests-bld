@@ -1,0 +1,84 @@
+#!/usr/bin/perl -w
+#
+#  Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+
+use strict;
+use File::Basename;
+
+# returns numbers with a normal distribution
+sub normal {
+  my($mean) = $_[0];
+  my($stddev) = $_[1];
+  
+  my $x = -6.0;
+  for (my $i = 0; $i < 12; $i++) {
+    $x += rand;
+  }
+  
+  $x = $mean + $stddev * $x;
+  return $x;
+}
+
+# location of fill2
+my $fill2="./src/fill2";
+
+# for each file attach a random number of attributes
+# each filled with a random amount of data
+# attribute name is the checksum of the data stored within
+# the attribute
+
+my $status = 0;			# return status
+my $file;
+
+while (<>) {
+  
+  chomp($file = $_);
+  die("Error: $0: $file not found\n") if ( ! -e $file);
+  
+  if ($0 =~ /fill2attr$/) {
+
+    # attach attributes to this file
+    my $num = abs(int(normal(3, 1)));
+    my $seed = 1;
+    my $verbose = 1;
+    my $tmp = "/tmp/fill2attr$$";
+    
+    for (my $i = 0; $i < $num; $i++) {
+      my $size = abs(int(normal(256, 200)));
+      my $cmd = "$fill2 -d nbytes=$size,linelength=72,seed=$seed -b 4k $tmp";
+      $cmd .= " > /dev/null 2>&1" if (! $verbose);
+      
+      if (system($cmd) != 0) {
+	die("Error $0: can't create $tmp\n");
+      }
+      
+      chomp($_ = `sum -r $tmp`);
+      my ($sum) = split(/\s+/);
+      system("cat $tmp | attr -s $sum $file > /dev/null");
+      system("rm $tmp");
+    }
+  }
+  elsif ($0 =~ /fill2attr_check/) {
+
+    # get the attributes for this file
+    my $cmd = "attr -q -l $file |";
+    open LIST, $cmd;
+    my @labels = <LIST>;
+    close LIST or die("Error listing attributes: $!");
+    chomp(@labels);
+
+    # check attribute contents
+    foreach my $label (@labels) {
+      my $sum;
+      ($sum) = split(/\s+/, `attr -q -g $label $file | sum -r`);
+      if ($sum ne $label) {
+	warn("Attribute \"$label\" does not match " .
+	     "attribute contents for file $file\n");
+	$status = 1;
+      }
+    }
+  }
+}
+
+exit($status);

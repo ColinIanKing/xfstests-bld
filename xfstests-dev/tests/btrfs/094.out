@@ -1,0 +1,58 @@
+QA output created by 094
+Blocks modified: [16 - 47]
+Blocks modified: [16 - 43]
+Blocks modified: [45 - 47]
+File contents in the original filesystem:
+mysnap1/foo
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+20 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+60
+mysnap2/foo
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+20 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+60
+mysnap2/bar
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55
+File contents in the new filesystem:
+mysnap1/foo
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+20 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+60
+mysnap2/foo
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+20 bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb bb
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
+*
+60
+mysnap2/bar
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+54 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+55

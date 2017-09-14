@@ -1,0 +1,363 @@
+##/bin/bash
+# Routines for reflinking, deduping, and comparing parts of files.
+#-----------------------------------------------------------------------
+#  Copyright (c) 2015 Oracle.  All Rights Reserved.
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+#  USA
+#
+#  Contact information: Oracle Corporation, 500 Oracle Parkway,
+#  Redwood Shores, CA 94065, USA, or: http://www.oracle.com/
+#-----------------------------------------------------------------------
+
+# Check that cp has a reflink argument
+_require_cp_reflink()
+{
+       cp --help | grep -q reflink || \
+               _notrun "This test requires a cp with --reflink support."
+}
+
+# Given 2 files, verify that they have the same mapping but different
+# inodes - i.e. an undisturbed reflink
+# Silent if so, make noise if not
+_verify_reflink()
+{
+       # not a hard link or symlink?
+       cmp -s  <(stat -c '%i' $1) <(stat -c '%i' $2) \
+               && echo "$1 and $2 are not reflinks: same inode number"
+
+       # same mapping?
+       diff -u <($XFS_IO_PROG -c "fiemap" $1 | grep -v $1) \
+               <($XFS_IO_PROG -c "fiemap" $2 | grep -v $2) \
+               || echo "$1 and $2 are not reflinks: different extents"
+}
+
+# New reflink/dedupe helpers
+
+# this test requires the test fs support reflink...
+_require_test_reflink()
+{
+	_require_test
+	_require_xfs_io_command "reflink"
+
+	rm -rf "$TEST_DIR/file1" "$TEST_DIR/file2"
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$TEST_DIR/file1" > /dev/null
+	"$XFS_IO_PROG" -f -c "reflink $TEST_DIR/file1 0 0 65536" "$TEST_DIR/file2" > /dev/null
+	if [ ! -s "$TEST_DIR/file2" ]; then
+		rm -rf "$TEST_DIR/file1" "$TEST_DIR/file2"
+		_notrun "Reflink not supported by test filesystem type: $FSTYP"
+	fi
+	rm -rf "$TEST_DIR/file1" "$TEST_DIR/file2"
+}
+
+# this test requires the scratch fs support reflink...
+_require_scratch_reflink()
+{
+	_require_scratch
+	_require_xfs_io_command "reflink"
+
+	_scratch_mkfs > /dev/null
+	_scratch_mount
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$SCRATCH_MNT/file1" > /dev/null
+	"$XFS_IO_PROG" -f -c "reflink $SCRATCH_MNT/file1 0 0 65536" "$SCRATCH_MNT/file2" > /dev/null
+	if [ ! -s "$SCRATCH_MNT/file2" ]; then
+		_scratch_unmount
+		_notrun "Reflink not supported by scratch filesystem type: $FSTYP"
+	fi
+	_scratch_unmount
+}
+
+# this test requires the test fs support dedupe...
+_require_test_dedupe()
+{
+	_require_test
+	_require_xfs_io_command "dedupe"
+
+	rm -rf "$TEST_DIR/file1" "$TEST_DIR/file2"
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$TEST_DIR/file1" > /dev/null
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$TEST_DIR/file2" > /dev/null
+	testio="$("$XFS_IO_PROG" -f -c "dedupe $TEST_DIR/file1 0 0 65536" "$TEST_DIR/file2" 2>&1)"
+	echo $testio | grep -q "Operation not supported" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	echo $testio | grep -q "Inappropriate ioctl for device" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	echo $testio | grep -q "Invalid argument" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	rm -rf "$TEST_DIR/file1" "$TEST_DIR/file2"
+}
+
+# this test requires the scratch fs support dedupe...
+_require_scratch_dedupe()
+{
+	_require_scratch
+	_require_xfs_io_command "dedupe"
+
+	_scratch_mkfs > /dev/null
+	_scratch_mount
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$SCRATCH_MNT/file1" > /dev/null
+	"$XFS_IO_PROG" -f -c "pwrite -S 0x61 0 65536" "$SCRATCH_MNT/file2" > /dev/null
+	testio="$("$XFS_IO_PROG" -f -c "dedupe $SCRATCH_MNT/file1 0 0 65536" "$SCRATCH_MNT/file2" 2>&1)"
+	echo $testio | grep -q "Operation not supported" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	echo $testio | grep -q "Inappropriate ioctl for device" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	echo $testio | grep -q "Invalid argument" && \
+		_notrun "Dedupe not supported by test filesystem type: $FSTYP"
+	_scratch_unmount
+}
+
+# Prints a range of a file as a hex dump
+_read_range() {
+	file="$1"
+	offset="$2"
+	len="$3"
+	xfs_io_args="$4"
+
+	$XFS_IO_PROG $xfs_io_args -f -c "pread -q -v $offset $len" "$file" | cut -d ' ' -f '3-18'
+}
+
+# Compare ranges of two files
+_compare_range() {
+	file1="$1"
+	offset1="$2"
+	file2="$3"
+	offset2="$4"
+	len="$5"
+
+	cmp -s <(_read_range "$file1" "$offset1" "$len") \
+	       <(_read_range "$file2" "$offset2" "$len")
+}
+
+# Prints the md5 checksum of a hexdump of a part of a given file
+_md5_range_checksum() {
+	file="$1"
+	offset="$2"
+	len="$3"
+
+	md5sum <(_read_range "$file" "$offset" "$len") | cut -d ' ' -f 1
+}
+
+# Reflink some file1 into file2 via cp
+_cp_reflink() {
+	file1="$1"
+	file2="$2"
+
+	cp --reflink=always -p "$file1" "$file2"
+}
+
+# Reflink some file1 into file2
+_reflink() {
+	file1="$1"
+	file2="$2"
+
+	"$XFS_IO_PROG" -f -c "reflink $file1" "$file2"
+}
+
+# Reflink some part of file1 into another part of file2
+_reflink_range() {
+	file1="$1"
+	offset1="$2"
+	file2="$3"
+	offset2="$4"
+	len="$5"
+	xfs_io_args="$6"
+
+	"$XFS_IO_PROG" $xfs_io_args -f -c "reflink $file1 $offset1 $offset2 $len" "$file2"
+}
+
+# Dedupe some part of file1 into another part of file2
+_dedupe_range() {
+	file1="$1"
+	offset1="$2"
+	file2="$3"
+	offset2="$4"
+	len="$5"
+	xfs_io_args="$6"
+
+	"$XFS_IO_PROG" $xfs_io_args -f -c "dedupe $file1 $offset1 $offset2 $len" "$file2"
+}
+
+# Create a file of interleaved unwritten and reflinked blocks
+_weave_reflink_unwritten() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile
+	$XFS_IO_PROG -f -c "falloc 0 $((blksz * nr))" $dfile
+	_pwrite_byte 0x00 0 $((blksz * nr)) $dfile.chk
+	seq 0 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $dfile.chk
+	done
+}
+
+# Create a file of interleaved holes and reflinked blocks
+_weave_reflink_holes() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile
+	$XFS_IO_PROG -f -c "truncate $((blksz * nr))" $dfile
+	_pwrite_byte 0x00 0 $((blksz * nr)) $dfile.chk
+	seq 0 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $dfile.chk
+	done
+}
+
+# For a file created with _weave_reflink_holes, fill the holes with delalloc
+# extents
+_weave_reflink_holes_delalloc() {
+	blksz=$1
+	nr=$2
+	dfile=$3
+
+	seq 1 2 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x62 $((blksz * i)) $blksz $dfile
+		_pwrite_byte 0x62 $((blksz * i)) $blksz $dfile.chk
+	done
+}
+
+# Create a file of interleaved regular blocks and reflinked blocks
+_weave_reflink_regular() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile
+	_pwrite_byte 0x62 0 $((blksz * nr)) $dfile
+	_pwrite_byte 0x62 0 $((blksz * nr)) $dfile.chk
+	seq 0 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $dfile.chk
+	done
+}
+
+# Create a file of interleaved holes, unwritten blocks, regular blocks, and
+# reflinked blocks
+_weave_reflink_rainbow() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile
+	$XFS_IO_PROG -f -c "truncate $((blksz * nr))" $dfile
+	_pwrite_byte 0x00 0 $((blksz * nr)) $dfile.chk
+	# 0 blocks are reflinked
+	seq 0 5 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $dfile.chk
+	done
+	# 1 blocks are unwritten
+	seq 1 5 $((nr - 1)) | while read i; do
+		$XFS_IO_PROG -f -c "falloc $((blksz * i)) $blksz" $dfile
+		_pwrite_byte 0x00 $((blksz * i)) $blksz $dfile.chk
+	done
+	# 2 blocks are holes
+	seq 2 5 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x00 $((blksz * i)) $blksz $dfile.chk
+	done
+	# 3 blocks are regular
+	seq 3 5 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x71 $((blksz * i)) $blksz $dfile
+		_pwrite_byte 0x71 $((blksz * i)) $blksz $dfile.chk
+	done
+	# 4 blocks will be delalloc later
+}
+
+# For a file created with _weave_reflink_rainbow, fill the holes with delalloc
+# extents
+_weave_reflink_rainbow_delalloc() {
+	blksz=$1
+	nr=$2
+	dfile=$3
+
+	# 4 blocks are delalloc (do later)
+	seq 4 5 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x62 $((blksz * i)) $blksz $dfile
+		_pwrite_byte 0x62 $((blksz * i)) $blksz $dfile.chk
+	done
+}
+
+# Make the source file have interleaved regular blocks and reflinked blocks
+_sweave_reflink_regular() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile
+	_pwrite_byte 0x62 0 $((blksz * nr)) $dfile
+	_pwrite_byte 0x61 0 $((blksz * nr)) $sfile.chk
+	seq 1 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+	done
+}
+
+# Make the source file have interleaved unwritten blocks and reflinked blocks
+_sweave_reflink_unwritten() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	$XFS_IO_PROG -f -c "falloc 0 $((blksz * nr))" $sfile
+	_pwrite_byte 0x00 0 $((blksz * nr)) $sfile.chk
+	_pwrite_byte 0x62 0 $((blksz * nr)) $dfile
+	seq 1 2 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $sfile
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $sfile.chk
+	done
+	seq 1 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+	done
+}
+
+# Make the source file have interleaved holes and reflinked blocks
+_sweave_reflink_holes() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+	dfile=$4
+
+	$XFS_IO_PROG -f -c "truncate $((blksz * nr))" $sfile
+	_pwrite_byte 0x00 0 $((blksz * nr)) $sfile.chk
+	_pwrite_byte 0x62 0 $((blksz * nr)) $dfile
+	seq 1 2 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $sfile
+		_pwrite_byte 0x61 $((blksz * i)) $blksz $sfile.chk
+	done
+	seq 1 2 $((nr - 1)) | while read i; do
+		_reflink_range $sfile $((blksz * i)) $dfile $((blksz * i)) $blksz
+	done
+}
+
+# For a file created with _sweave_reflink_holes, fill the holes with delalloc
+# extents
+_sweave_reflink_holes_delalloc() {
+	blksz=$1
+	nr=$2
+	sfile=$3
+
+	seq 0 2 $((nr - 1)) | while read i; do
+		_pwrite_byte 0x64 $((blksz * i)) $blksz $sfile
+		_pwrite_byte 0x64 $((blksz * i)) $blksz $sfile.chk
+	done
+}

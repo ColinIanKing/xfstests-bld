@@ -1,0 +1,218 @@
+#! /bin/bash
+# FS QA Test No. 062
+#
+# Exercises the getfattr/setfattr tools
+# Derived from tests originally written by Andreas Gruenbacher for ext2
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+_cleanup()
+{
+        cd /
+	echo; echo "*** unmount"
+	_scratch_unmount 2>/dev/null
+	rm -f $tmp.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+getfattr()
+{
+    $GETFATTR_PROG --absolute-names -dh $@ 2>&1 | _filter_scratch
+}
+
+setfattr()
+{
+    $SETFATTR_PROG $@ 2>&1 | _filter_scratch
+}
+
+_create_test_bed()
+{
+	echo "*** create test bed"
+	touch $SCRATCH_MNT/reg
+	mkdir -p $SCRATCH_MNT/dir
+	ln -s $SCRATCH_MNT/dir $SCRATCH_MNT/lnk
+	mkdir $SCRATCH_MNT/dev
+	mknod $SCRATCH_MNT/dev/b b 0 0
+	mknod $SCRATCH_MNT/dev/c c 1 3
+	mknod $SCRATCH_MNT/dev/p p
+	# sanity check
+	find $SCRATCH_MNT | LC_COLLATE=POSIX sort | _filter_scratch | grep -v "lost+found"
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+
+_require_scratch
+_require_attrs
+
+rm -f $tmp.backup1 $tmp.backup2 $seqres.full
+
+# real QA test starts here
+_scratch_mkfs > /dev/null 2>&1 || _fail "mkfs failed"
+_scratch_mount || _fail "mount failed"
+_create_test_bed
+
+# In kernels before 3.0, getxattr() fails with EPERM for an attribute which
+# cannot exist.  Later kernels fail with ENODATA.  Accept both results.
+invalid_attribute_filter() {
+	sed -e "s:\(No such attribute\|Operation not permitted\):No such attribute or operation not permitted:"
+}
+
+if [ "$USE_ATTR_SECURE" = yes ]; then
+    ATTR_MODES="user security trusted"
+else
+    ATTR_MODES="user trusted"
+fi
+for nsp in $ATTR_MODES; do
+	for inode in reg dir lnk dev/b dev/c dev/p; do
+
+		echo; echo "=== TYPE $inode; NAMESPACE $nsp"; echo
+		echo "*** set/get one initially empty attribute"
+    
+		setfattr -h -n $nsp.name $SCRATCH_MNT/$inode
+		getfattr -m $nsp $SCRATCH_MNT/$inode
+
+		echo "*** overwrite empty, set several new attributes"
+		setfattr -h -n $nsp.name -v 0xbabe $SCRATCH_MNT/$inode
+		setfattr -h -n $nsp.name2 -v 0xdeadbeef $SCRATCH_MNT/$inode
+		setfattr -h -n $nsp.name3 -v 0xdeface $SCRATCH_MNT/$inode
+
+		echo "*** fetch several attribute names and values (hex)"
+		getfattr -m $nsp -e hex $SCRATCH_MNT/$inode
+
+		echo "*** fetch several attribute names and values (base64)"
+		getfattr -m $nsp -e base64 $SCRATCH_MNT/$inode
+		
+		echo "*** shrink value of an existing attribute"
+		setfattr -h -n $nsp.name2 -v 0xdeaf $SCRATCH_MNT/$inode
+		getfattr -m $nsp -e hex $SCRATCH_MNT/$inode
+
+		echo "*** grow value of existing attribute"
+		setfattr -h -n $nsp.name2 -v 0xdecade $SCRATCH_MNT/$inode
+		getfattr -m $nsp -e hex $SCRATCH_MNT/$inode
+		
+		echo "*** set an empty value for second attribute"
+		setfattr -h -n $nsp.name2 $SCRATCH_MNT/$inode
+		getfattr -m $nsp -n $nsp.name2 $SCRATCH_MNT/$inode 2>&1 | invalid_attribute_filter
+
+		echo "*** overwrite empty value"
+		setfattr -h -n $nsp.name2 -v 0xcafe $SCRATCH_MNT/$inode
+		getfattr -m $nsp -e hex -n $nsp.name2 $SCRATCH_MNT/$inode 2>&1 | invalid_attribute_filter
+
+		echo "*** remove attribute"
+		setfattr -h -x $nsp.name2 $SCRATCH_MNT/$inode
+		getfattr -m $nsp -e hex -n $nsp.name2 $SCRATCH_MNT/$inode 2>&1 | invalid_attribute_filter
+
+		echo "*** final list (strings, type=$inode, nsp=$nsp)"
+		getfattr -m '.' -e hex $SCRATCH_MNT/$inode
+	
+	done
+done
+
+# 
+# Test the directory descent code
+# 
+echo; echo
+
+_extend_test_bed()
+{
+	echo "*** extend test bed"
+	# must set some descents' attributes to be useful
+	mkdir -p $SCRATCH_MNT/here/up/ascend
+	mkdir -p $SCRATCH_MNT/descend/down/here
+	find $SCRATCH_MNT/descend | xargs setfattr -n user.x -v yz
+	find $SCRATCH_MNT/descend | xargs setfattr -n user.1 -v 23
+	find $SCRATCH_MNT/here | xargs setfattr -n trusted.a -v bc
+	find $SCRATCH_MNT/here | xargs setfattr -n trusted.9 -v 87
+	# whack a symlink in the middle, just to be difficult
+	ln -s $SCRATCH_MNT/here/up $SCRATCH_MNT/descend/and
+	# dump out our new starting point
+	find $SCRATCH_MNT | LC_COLLATE=POSIX sort | _filter_scratch | grep -v "lost+found"
+}
+
+_extend_test_bed
+
+echo
+echo "*** directory descent with us following symlinks"
+getfattr -h -L -R -m '.' -e hex $SCRATCH_MNT | _sort_getfattr_output
+
+echo
+echo "*** directory descent without following symlinks"
+getfattr -h -P -R -m '.' -e hex $SCRATCH_MNT | _sort_getfattr_output
+
+# 
+# Test the backup/restore code
+# 
+echo; echo
+
+_backup()
+{
+	# NB: no filtering of scratch here... (need to restore too)
+	$GETFATTR_PROG --absolute-names -dh -R -m '.' $SCRATCH_MNT >$1
+	echo BACKUP $1 >>$seqres.full
+	cat $1 >> $seqres.full
+	[ ! -s $1 ] && echo "warning: $1 (backup file) is empty"
+}
+
+echo "*** backup everything"
+_backup $tmp.backup1
+
+echo "*** clear out the scratch device"
+rm -fr $SCRATCH_MNT/*
+echo "AFTER REMOVE" >>$seqres.full
+getfattr -L -R -m '.' $SCRATCH_MNT >>$seqres.full
+
+echo "*** reset test bed with no extended attributes"
+_create_test_bed
+_extend_test_bed
+
+echo "*** restore everything"
+setfattr -h --restore=$tmp.backup1
+_backup $tmp.backup2
+
+echo "AFTER RESTORE" >>$seqres.full
+getfattr -L -R -m '.' $SCRATCH_MNT >>$seqres.full
+
+echo "*** compare before and after backups"
+diff $tmp.backup1 $tmp.backup2
+if [ $? -ne 0 ]; then
+	echo "urk, failed - creating $seq.backup1 and $seq.backup2"
+	cp $tmp.backup1 $seq.backup1 && cp $tmp.backup2 $seq.backup2
+	status=1
+	exit
+fi
+
+# success, all done
+status=0
+exit

@@ -1,0 +1,76 @@
+#! /bin/bash
+# FSQA Test No. 126
+#
+# tests various file permission options modified from CXFSQA test fs_perms
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2006 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+_require_test
+
+QA_FS_PERMS=$here/src/fs_perms
+
+cd $TEST_DIR
+cp $here/src/testx ./testx.file
+
+# file_perm owner_uid owner_gid tester_uid tester_gid perm_to_test expected_result pass=1
+$QA_FS_PERMS 001 99 99 12 100 x 1
+$QA_FS_PERMS 010 99 99 200 99 x 1
+$QA_FS_PERMS 100 99 99 99 500 x 1
+$QA_FS_PERMS 002 99 99 12 100 w 1
+$QA_FS_PERMS 020 99 99 200 99 w 1
+$QA_FS_PERMS 200 99 99 99 500 w 1
+$QA_FS_PERMS 004 99 99 12 100 r 1
+$QA_FS_PERMS 040 99 99 200 99 r 1
+$QA_FS_PERMS 400 99 99 99 500 r 1
+$QA_FS_PERMS 000 99 99 99 99 r 1
+$QA_FS_PERMS 000 99 99 99 99 w 1
+$QA_FS_PERMS 000 99 99 99 99 x 1
+$QA_FS_PERMS 010 99 99 99 500 x 1
+$QA_FS_PERMS 100 99 99 200 99 x 1
+$QA_FS_PERMS 020 99 99 99 500 w 1
+$QA_FS_PERMS 200 99 99 200 99 w 1
+$QA_FS_PERMS 040 99 99 99 500 r 1
+$QA_FS_PERMS 400 99 99 200 99 r 1
+
+rm -f ./testx.file
+
+status=0
+exit

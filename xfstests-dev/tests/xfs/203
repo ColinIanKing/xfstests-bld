@@ -1,0 +1,90 @@
+#! /bin/bash
+# FS QA Test No. 203
+#
+# Test out reallocation of the extent array in xfs_io.
+# Based on a testcase from Tomasz Majkowski <moosh009@gmail.com>.
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2009 Christoph Hellwig.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+
+_write_holes()
+{
+	file=$1
+	holes=$2
+	let writes=$holes+1
+	let fsize=$(($writes * 0x100000))
+
+	# prevent EOF preallocation from affecting results
+	$XFS_IO_PROG -f $file -c "truncate $fsize"
+
+	offset=0
+	for i in `seq 0 $writes`; do
+		$XFS_IO_PROG -f $file -c "pwrite -b 64k -q $offset 64k"
+		let offset=$offset+0x100000
+	done
+}
+
+#       0: [0..7]: 104..111
+#       1: [8..2047]: hole
+_filter_bmap()
+{
+	_filter_scratch |
+	awk '$3 ~ /hole/ { print $1, $2, $3; next }
+             {print $1, $2; next}'
+}
+
+_cleanup()
+{
+	rm -f $SCRATCH_MNT/r??
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+rm -f $seqres.full
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_scratch
+_scratch_mkfs > /dev/null 2>&1
+_scratch_mount > /dev/null 2>&1
+
+for i in 10 14 15 16 17 28 29 30 31; do
+        rm -f $SCRATCH_MNT/hole_file
+	_write_holes $SCRATCH_MNT/hole_file${i} ${i}
+done
+
+for i in 10 14 15 16 17 28 29 30 31; do
+        xfs_bmap $SCRATCH_MNT/hole_file${i} | _filter_bmap
+	echo
+done
+
+# success, all done
+echo "*** done"
+status=0

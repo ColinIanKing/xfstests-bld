@@ -1,0 +1,81 @@
+#! /bin/bash
+# FS QA Test No. 192
+#
+# Simple test of atime
+# - ensure it is persistent after unmount
+# - check updated time by correct amount
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2008 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "exit \$status" 0 1 2 3 15
+
+_access_time()
+{
+	stat -c %X $1
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+
+_supported_fs generic
+_supported_os Linux
+_require_test
+_require_atime
+#delay=150
+#delay=75
+#delay=60
+#delay=45
+delay=40
+
+testfile=$TEST_DIR/testfile
+rm -f $testfile
+rm -f $seqres.full
+
+echo test >$testfile
+time1=`_access_time $testfile | tee -a $seqres.full`
+
+echo "sleep for $delay"
+sleep $delay # sleep to allow time to move on for access
+cat $testfile
+time2=`_access_time $testfile | tee -a $seqres.full`
+
+cd /
+_test_cycle_mount
+time3=`_access_time $testfile | tee -a $seqres.full`
+
+delta1=`expr $time2 - $time1`
+delta2=`expr $time3 - $time1`
+
+echo "delta1 - access time after sleep in-core: $delta1"
+echo "delta2 - access time after sleep on-disk: $delta2"
+
+# success, all done
+status=0
+exit

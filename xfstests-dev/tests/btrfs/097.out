@@ -1,0 +1,18 @@
+QA output created by 097
+Blocks modified: [32 - 47]
+File contents in the original filesystem:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+40 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+60
+File contents in the new filesystem:
+0 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+40 aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa aa
+*
+60

@@ -1,0 +1,97 @@
+QA output created by 056
+Testing without the NO_HOLES feature
+Blocks modified: [0 - 1]
+Blocks modified: [2 - 3]
+Blocks modified: [6 - 7]
+Blocks modified: [8 - 9]
+Blocks modified: [0 - 23]
+Blocks modified: [0 - 0]
+Blocks modified: [0 - 0]
+Verifying file bar content
+0 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+*
+1 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+3 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04
+*
+5 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05
+*
+6 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+*
+30
+Verifying file bar2 content
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+0
+Testing without the NO_HOLES feature and compression (lzo)
+Blocks modified: [0 - 1]
+Blocks modified: [2 - 3]
+Blocks modified: [6 - 7]
+Blocks modified: [8 - 9]
+Blocks modified: [0 - 23]
+Blocks modified: [0 - 0]
+Blocks modified: [0 - 0]
+Verifying file bar content
+0 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+*
+1 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+3 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04
+*
+5 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05
+*
+6 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+*
+30
+Verifying file bar2 content
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+0
+Testing with the NO_HOLES feature enabled
+Blocks modified: [0 - 1]
+Blocks modified: [2 - 3]
+Blocks modified: [6 - 7]
+Blocks modified: [8 - 9]
+Blocks modified: [0 - 23]
+Blocks modified: [0 - 0]
+Blocks modified: [0 - 0]
+Verifying file bar content
+0 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+*
+1 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+3 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04
+*
+5 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05
+*
+6 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+*
+30
+Verifying file bar2 content
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+0
+Testing with the NO_HOLES feature enabled and compression (lzo)
+Blocks modified: [0 - 1]
+Blocks modified: [2 - 3]
+Blocks modified: [6 - 7]
+Blocks modified: [8 - 9]
+Blocks modified: [0 - 23]
+Blocks modified: [0 - 0]
+Blocks modified: [0 - 0]
+Verifying file bar content
+0 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+*
+1 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+3 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04
+*
+5 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05
+*
+6 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+*
+30
+Verifying file bar2 content
+0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+0

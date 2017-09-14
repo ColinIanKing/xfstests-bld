@@ -1,0 +1,90 @@
+#! /bin/bash
+# FS QA Test No. 067
+#
+# Test out acl/dacls which fit in shortform in the inode
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2002 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/attr
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+
+_require_attrs
+_require_acls
+_require_scratch
+
+# set up fs for 1K inodes
+isize=0
+_scratch_mkfs_xfs | _filter_mkfs >$seqres.full 2>$tmp.mkfs
+[ $? -eq 0 ] && source $tmp.mkfs
+if [ "$isize" -lt 1024 ]; then
+    _scratch_mkfs_xfs -i size=1024 >>$seqres.full \
+	|| _notrun "Cannot mkfs for this test using MKFS_OPTIONS specified"
+fi
+_scratch_mount >>$seqres.full || _fail "mount failed"
+xfs_info $SCRATCH_MNT >>$seqres.full
+cd $SCRATCH_MNT
+
+echo ""
+echo "=== Test out large ACLs  ==="
+
+mkdir largeacldir
+
+# John Trostel reported probs with going from 20 to 21 aces
+# 20 ace ACL = 20*12+4 = 244 bytes
+# 21 ace ACL = 21*12+4 = 256 bytes - too big for shortform
+# the 21 ace ACL can not be shortform
+#
+acl20=`_create_n_aces 20`
+acl21=`_create_n_aces 21`
+
+echo "try 20 aces for access acl"
+chacl $acl20 largeacldir
+getfacl --numeric largeacldir | _filter_aces
+
+echo "try 20 aces for default acl"
+chacl -d $acl20 largeacldir
+getfacl --numeric largeacldir | _filter_aces
+
+echo "try 21 aces for access acl"
+chacl $acl21 largeacldir
+getfacl --numeric largeacldir | _filter_aces
+
+echo "try 21 aces for default acl"
+chacl -d $acl21 largeacldir
+getfacl --numeric largeacldir | _filter_aces
+
+# success, all done
+status=0
+exit

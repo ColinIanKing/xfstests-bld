@@ -1,0 +1,98 @@
+#
+# Copyright (c) 2003 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# @configure_input@
+#
+
+ifndef _BUILDDEFS_INCLUDED_
+_BUILDDEFS_INCLUDED_ = 1
+
+DEBUG = @debug_build@
+OPTIMIZER = @opt_build@
+MALLOCLIB = @malloc_lib@
+LOADERFLAGS = @LDFLAGS@
+CFLAGS = @CFLAGS@
+CPPFLAGS = @CPPFLAGS@
+
+HAVE_LIBXFS = @have_libxfs@
+HAVE_XLOG_ASSIGN_LSN = @have_xlog_assign_lsn@
+LIBXFS = @libxfs@
+LIBACL = @libacl@
+LIBATTR = @libattr@
+LIBGDBM = @libgdbm@
+LIBUUID = @libuuid@
+LIBHANDLE = @libhdl@
+LIBDM = @libdm@
+LIBTEST = $(TOPDIR)/lib/libtest.la
+
+PKG_NAME        = @pkg_name@
+PKG_USER        = @pkg_user@
+PKG_GROUP       = @pkg_group@
+PKG_RELEASE     = @pkg_release@
+PKG_VERSION     = @pkg_version@
+PKG_PLATFORM    = @pkg_platform@
+PKG_DISTRIBUTION= @pkg_distribution@
+PKG_SBIN_DIR    = @sbindir@
+# A bit of a hack; by rights only state should probably go here
+# But for now ...
+PKG_LIB_DIR     = /var/lib/@pkg_name@
+
+CC              = @cc@
+AWK             = @awk@
+SED             = @sed@
+TAR             = @tar@
+ZIP             = @zip@
+MAKE            = @make@
+ECHO            = @echo@
+SORT            = @sort@
+LN_S            = @LN_S@
+SHELL		= @SHELL@
+LIBTOOL         = @LIBTOOL@
+MAKEDEPEND      = @makedepend@
+
+MSGFMT          = @msgfmt@
+MSGMERGE        = @msgmerge@
+
+RPM             = @rpm@
+RPMBUILD        = @rpmbuild@
+RPM_VERSION     = @rpm_version@
+
+ENABLE_SHARED = @enable_shared@
+HAVE_DB = @have_db@
+HAVE_AIO = @have_aio@
+HAVE_FALLOCATE = @have_fallocate@
+HAVE_SSL = @have_ssl@
+HAVE_DMAPI = @have_dmapi@
+HAVE_ATTR_LIST = @have_attr_list@
+HAVE_FIEMAP = @have_fiemap@
+HAVE_FALLOCATE = @have_fallocate@
+
+GCCFLAGS = -funsigned-char -fno-strict-aliasing -Wall
+
+ifeq ($(PKG_PLATFORM),linux)
+PCFLAGS = -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 $(GCCFLAGS)
+endif
+ifeq ($(PKG_PLATFORM),darwin)
+PCFLAGS = -traditional-cpp $(GCCFLAGS)
+endif
+ifeq ($(PKG_PLATFORM),irix)
+PCFLAGS = -nostdinc -I$(ROOT)/usr/include -I$(TOPDIR)/../irix/include
+endif
+ifeq ($(PKG_PLATFORM),freebsd)
+endif
+
+GCFLAGS = $(OPTIMIZER) $(DEBUG) $(CPPFLAGS) \
+	-I$(TOPDIR)/include -DVERSION=\"$(PKG_VERSION)\"
+
+# Global, Platform, Local CFLAGS
+CFLAGS += $(GCFLAGS) $(PCFLAGS) $(LCFLAGS)
+
+include $(TOPDIR)/include/buildmacros
+
+endif
+
+#
+# For targets that should always be rebuilt,
+# define a target that is never up-to-date.
+# Targets needing this should depend on $(_FORCE)
+_FORCE = __force_build

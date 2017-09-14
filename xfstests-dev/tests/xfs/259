@@ -1,0 +1,83 @@
+#! /bin/bash
+# FS QA Test No. 259
+#
+# Test fs creation on 4 TB minus few bytes partition
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2011 Red Hat.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+status=1	# failure is the default!
+
+_cleanup()
+{
+    rm -f "$testfile"
+}
+
+trap "_cleanup ; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os Linux
+_require_test
+_require_loop
+_require_math
+
+testfile=$TEST_DIR/259.image
+
+# Test various sizes slightly less than 4 TB. Need to handle different
+# minimum block sizes for CRC enabled filesystems, but use a small log so we
+# don't write lots of zeros unnecessarily.
+sizes_to_check="4096 2048 1024 512"
+blocksizes="4096 2048 1024 512"
+four_TB=$(_math "2^42")
+# The initial value of _fs_has_crcs is not important, because we start testing
+# with 4096 block size, it only matters for 512 block size test
+_fs_has_crcs=0
+for del in $sizes_to_check; do
+	for bs in $blocksizes; do
+		echo "Trying to make (4TB - ${del}B) long xfs, block size $bs"
+		# skip tests with 512 block size if the fs created has crc
+		# enabled by default
+		if [ $_fs_has_crcs -eq 1 -a $bs -eq 512 ]; then
+			break;
+		fi
+		ddseek=$(_math "$four_TB - $del")
+		rm -f "$testfile"
+		dd if=/dev/zero "of=$testfile" bs=1 count=0 seek=$ddseek \
+			>/dev/null 2>&1 || echo "dd failed"
+		lofile=$(losetup -f)
+		losetup $lofile "$testfile"
+		$MKFS_XFS_PROG -l size=32m -b size=$bs $lofile |  _filter_mkfs \
+			>/dev/null 2> $tmp.mkfs || echo "mkfs failed!"
+		. $tmp.mkfs
+		sync
+		losetup -d $lofile
+	done
+done
+
+status=0
+exit

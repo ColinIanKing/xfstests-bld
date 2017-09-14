@@ -1,0 +1,93 @@
+#! /bin/bash
+# FS QA Test No. 089
+#
+# Emulate the way Linux mount manipulates /etc/mtab to attempt to
+# reproduce a possible bug in rename (see src/t_mtab.c).
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+mtab_output=$TEST_DIR/mtab_output
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "rm -f $tmp.*; exit \$status" 0 1 2 3 15
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+addentries()
+{
+	count=$1
+	pattern="%0$2d"
+
+	while [ $count -gt 0 ]; do
+		touch `printf $pattern $count`
+		let count=$count-1
+	done
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+_require_test
+
+rm -f $seqres.full
+[ "X$TEST_DIR" = "X" ] && exit 1
+cd $TEST_DIR
+rm -fr test
+mkdir test || exit 1
+cd $TEST_DIR/test
+mount > t_mtab
+
+mtab()
+{
+	rm -f $mtab_output
+	$here/src/t_mtab 50 $mtab_output &
+	$here/src/t_mtab 50 $mtab_output &
+	$here/src/t_mtab 50 $mtab_output &
+	wait
+	cat $mtab_output
+
+	$here/src/t_mtab 10000
+
+	echo directory entries:
+	ls | grep mtab
+	echo directory entries >> $seqres.full
+	ls -li >> $seqres.full
+}
+
+# directory with only a few entries
+mtab
+
+# directory with a hundred more entries, each 4chars wide
+addentries 100 4
+mtab
+
+# directory with a thousand more entries, each 8chars wide
+addentries 1000 8
+mtab
+
+status=0
+exit

@@ -1,0 +1,147 @@
+#! /bin/bash
+# FS QA Test No. 019
+#
+# mkfs protofile test
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2000-2004 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+seqfull="$seqres.full"
+status=1	# failure is the default!
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_cleanup()
+{
+    echo "*** unmount"
+    _scratch_unmount 2>/dev/null
+    rm -f $tmp.*
+}
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_full()
+{
+    echo ""            >>$seqfull
+    echo "*** $* ***"  >>$seqfull
+    echo ""            >>$seqfull
+}
+
+_filter_stat()
+{
+    sed '
+        /^Access:/d;
+        /^Modify:/d;
+        /^Change:/d;
+        s/Device: *[0-9][0-9]*,[0-9][0-9]*/Device: <DEVICE>/;
+        s/Inode: *[0-9][0-9]*/Inode: <INODE>/;
+        s/Size: *[0-9][0-9]* *Filetype: Dir/Size: <DSIZE> Filetype: Dir/;
+    ' | tr -s ' '
+}
+
+# real QA test starts here
+_supported_fs xfs
+_supported_os IRIX Linux
+
+_require_scratch
+
+protofile=$tmp.proto
+tempfile=$tmp.file
+
+echo fish >$tempfile
+$here/src/devzero -b 2048 -n 2 -c -v 44 $tempfile.2 
+
+cat >$protofile <<EOF
+DUMMY1
+0 0
+: root directory
+d--777 3 1
+: a directory
+directory d--755 3 1 
+file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_0 ---755 3 1 $tempfile
+file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_1 ---755 3 1 $tempfile
+file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_2 ---755 3 1 $tempfile
+file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_3 ---755 3 1 $tempfile
+file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_4 ---755 3 1 $tempfile
+$
+: back in the root
+setuid -u-666 0 0 $tempfile
+setgid --g666 0 0 $tempfile
+setugid -ug666 0 0 $tempfile
+block_device b--012 3 1 161 162 
+char_device c--345 3 1 177 178
+pipe p--670 0 0
+symlink l--123 0 0 bigfile
+: a file we actually read
+bigfile ---666 3 0 $tempfile.2
+: done
+$
+EOF
+
+if [ $? -ne 0 ]
+then
+    _fail "failed to create test protofile"
+fi
+
+_verify_fs()
+{
+	echo "*** create FS version $1"
+	VERSION="-n version=$1"
+
+	rm -f $seqfull
+	_scratch_unmount >/dev/null 2>&1
+
+	_full "mkfs"
+	_scratch_mkfs_xfs $VERSION -p $protofile >>$seqfull 2>&1 \
+		|| _fail "mkfs failed"
+
+	echo "*** check FS"
+	_check_scratch_fs
+
+	echo "*** mount FS"
+	_full " mount"
+	_scratch_mount >>$seqfull 2>&1 \
+		|| _fail "mount failed"
+
+	echo "*** verify FS"
+	(cd $SCRATCH_MNT ; find . | LC_COLLATE=POSIX sort \
+		| grep -v ".use_space" \
+		| xargs $here/src/lstat64 | _filter_stat)
+	diff -q $SCRATCH_MNT/bigfile $tempfile.2 \
+		|| _fail "bigfile corrupted"
+
+	echo "*** unmount FS"
+	_full "umount"
+	_scratch_unmount >>$seqfull 2>&1 \
+		|| _fail "umount failed"
+}
+
+#_verify_fs 1
+_verify_fs 2
+
+echo "*** done"
+rm $seqfull
+status=0
+exit

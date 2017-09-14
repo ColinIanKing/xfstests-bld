@@ -1,0 +1,106 @@
+#! /bin/bash
+# FS QA Test No. 113
+#
+# aio-stress
+#
+#-----------------------------------------------------------------------
+# Copyright (c) 2005 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+#-----------------------------------------------------------------------
+#
+
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=0	# success is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+    cd /
+    rm -f $TEST_DIR/aio-stress.$$.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+
+_do_test()
+{
+    _n="$1"
+    _param="$2"
+    _count="$3"
+    _nproc="$4"
+
+    _files="$TEST_DIR/aiostress.$$.$_n"
+    __proc=$_nproc
+    [ $__proc -gt 1 ] && _param="-t $__proc $_param"
+    while [ $__proc -gt 1 ]; do
+        _files="$_files $TEST_DIR/aiostress.$$.$_n.$__proc"
+	let __proc=$__proc-1
+    done
+    rm -f $_files
+ 
+    echo ""
+    echo "-----------------------------------------------"
+    echo "aio-stress.$_n : $_param"
+    echo "-----------------------------------------------"
+    if ! $here/ltp/aio-stress $_param $AIOSTRESS_AVOID -I $_count $_files >>$tmp.out 2>&1
+    then
+        echo "    aio-stress (count=$_count) returned $?"
+        cat $tmp.out
+        status=1
+        exit
+    fi
+
+    _check_test_fs
+    rm -f $_files
+}
+
+# real QA test starts here
+_supported_fs generic
+_supported_os Linux
+_require_test
+_require_odirect
+
+[ -x $here/ltp/aio-stress ] || _notrun "aio-stress not built for this platform"
+
+echo "brevity is wit..."
+
+count=1000
+procs=20
+
+_check_test_fs
+
+# the default
+_do_test 1 "-s 120m" $count 1
+
+# and the default with multiprocess
+_do_test 2 "-s 10m" $count $procs
+
+# as above, but now using direct IO
+_do_test 3 "-s 10m -O" $count $procs
+
+# dio with O_SYNC and unwritten extent conversion
+_do_test 4 "-s 10m -O -S" $count $procs
+
+# random dio writes with O_SYNC and unwritten extent conversion
+_do_test 5 "-s 10m -O -S -o 2" $count $procs
+
+exit
